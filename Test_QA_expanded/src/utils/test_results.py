@@ -1,17 +1,58 @@
-import csv
 import json
-import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import pandas as pd
 
 from .accuracy_assessment import write_historical_accuracy_assessment
 from .config import AmmeterConfig, AppConfig
+
+MEASUREMENT_COLUMNS = [
+    "run_id",
+    "sample_index",
+    "ammeter_type",
+    "timestamp_utc",
+    "elapsed_seconds",
+    "current_a",
+    "status",
+    "error",
+]
+
+SAMPLE_CSV_COLUMNS = [
+    "sample_index",
+    "ammeter_type",
+    "timestamp_utc",
+    "elapsed_seconds",
+    "current_a",
+    "status",
+    "error",
+]
+
+ANALYTICS_CSV_COLUMNS = [
+    "ammeter_type",
+    "valid_sample_count",
+    "failed_sample_count",
+    "mean_current_a",
+    "median_current_a",
+    "standard_deviation_a",
+    "minimum_current_a",
+    "maximum_current_a",
+    "coefficient_of_variation",
+]
+
+ANALYTICS_FLOAT_COLUMNS = [
+    "mean_current_a",
+    "median_current_a",
+    "standard_deviation_a",
+    "minimum_current_a",
+    "maximum_current_a",
+    "coefficient_of_variation",
+]
 
 
 @dataclass
@@ -55,33 +96,34 @@ def save_test_results(
             "time_series_plot": "analytics/time_series.png",
         },
     }
+    measurements_df = _measurements_to_dataframe(measurements)
+    analytics_df = _analytics_to_dataframe(config.ammeters, analysis)
 
     for ammeter_type, sample_artifact in sample_artifacts.items():
-        ammeter_measurements = [
-            sample for sample in measurements if sample.ammeter_type == ammeter_type
+        ammeter_measurements_df = measurements_df[
+            measurements_df["ammeter_type"].eq(ammeter_type)
         ]
-        _write_samples_csv(run_dir / sample_artifact["csv"], ammeter_measurements)
+        _write_samples_csv(run_dir / sample_artifact["csv"], ammeter_measurements_df)
         _write_timeseries_plot(
             run_dir / sample_artifact["time_series_plot"],
             {ammeter_type: config.ammeters[ammeter_type]},
-            ammeter_measurements,
+            ammeter_measurements_df,
             title=f"{ammeter_type} Current Measurements Over Time",
         )
 
     _write_analytics_csv(
         run_dir / artifacts["analytics"]["csv"],
-        config.ammeters,
-        analysis,
+        analytics_df,
     )
     _write_timeseries_plot(
         run_dir / artifacts["analytics"]["time_series_plot"],
         config.ammeters,
-        measurements,
+        measurements_df,
     )
     _write_metadata_json(
         run_dir / artifacts["metadata"],
         config,
-        measurements,
+        measurements_df,
         artifacts,
         run_id,
         started_at_utc,
@@ -92,70 +134,60 @@ def save_test_results(
     return run_dir
 
 
-def _write_samples_csv(output_path: Path, measurements: List[Any]) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "sample_index",
-        "ammeter_type",
-        "timestamp_utc",
-        "elapsed_seconds",
-        "current_a",
-        "status",
-        "error",
+def _measurements_to_dataframe(measurements: List[Any]) -> pd.DataFrame:
+    measurements_df = pd.DataFrame(
+        [asdict(sample) for sample in measurements],
+        columns=MEASUREMENT_COLUMNS,
+    )
+    for column in ("elapsed_seconds", "current_a"):
+        measurements_df[column] = pd.to_numeric(measurements_df[column], errors="coerce")
+    return measurements_df
+
+
+def _analytics_to_dataframe(
+    ammeters: Dict[str, AmmeterConfig], analysis: Dict[str, Any]
+) -> pd.DataFrame:
+    rows = [
+        {
+            key: value
+            for key, value in asdict(analysis[ammeter_type]).items()
+            if key != "run_id"
+        }
+        for ammeter_type in ammeters
     ]
-
-    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer.writeheader()
-        for sample in measurements:
-            row = asdict(sample)
-            row.pop("run_id")
-            row["elapsed_seconds"] = _csv_value(sample.elapsed_seconds)
-            row["current_a"] = _csv_value(sample.current_a)
-            writer.writerow(row)
+    analytics_df = pd.DataFrame(rows, columns=ANALYTICS_CSV_COLUMNS)
+    for column in ANALYTICS_FLOAT_COLUMNS:
+        analytics_df[column] = pd.to_numeric(analytics_df[column], errors="coerce")
+    return analytics_df
 
 
-def _write_analytics_csv(
-    output_path: Path,
-    ammeters: Dict[str, AmmeterConfig],
-    analysis: Dict[str, Any],
-) -> None:
+def _write_samples_csv(output_path: Path, measurements_df: pd.DataFrame) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "ammeter_type",
-        "valid_sample_count",
-        "failed_sample_count",
-        "mean_current_a",
-        "median_current_a",
-        "standard_deviation_a",
-        "minimum_current_a",
-        "maximum_current_a",
-        "coefficient_of_variation",
-    ]
+    csv_df = measurements_df.reindex(columns=SAMPLE_CSV_COLUMNS).copy()
+    for column in ("elapsed_seconds", "current_a"):
+        csv_df[column] = pd.to_numeric(csv_df[column], errors="coerce").round(10)
+    csv_df.to_csv(output_path, index=False)
 
-    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer.writeheader()
-        for ammeter_type in ammeters:
-            row = asdict(analysis[ammeter_type])
-            row.pop("run_id")
-            for fieldname in fieldnames:
-                if isinstance(row[fieldname], float):
-                    row[fieldname] = _csv_value(row[fieldname])
-            writer.writerow(row)
+
+def _write_analytics_csv(output_path: Path, analytics_df: pd.DataFrame) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_df = analytics_df.reindex(columns=ANALYTICS_CSV_COLUMNS).copy()
+    for column in ANALYTICS_FLOAT_COLUMNS:
+        csv_df[column] = pd.to_numeric(csv_df[column], errors="coerce").round(10)
+    csv_df.to_csv(output_path, index=False)
 
 
 def _write_metadata_json(
     output_path: Path,
     config: AppConfig,
-    measurements: List[Any],
+    measurements_df: pd.DataFrame,
     artifacts: Dict[str, Any],
     run_id: str,
     started_at_utc: str,
     ended_at_utc: str,
 ) -> None:
-    total_samples = len(measurements)
-    failed_samples = sum(1 for sample in measurements if sample.status != "ok")
+    total_samples = len(measurements_df)
+    failed_samples = int(measurements_df["status"].ne("ok").sum())
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     metadata = TestRunMetadata(
@@ -186,7 +218,7 @@ def _write_metadata_json(
 def _write_timeseries_plot(
     output_path: Path,
     ammeters: Dict[str, AmmeterConfig],
-    measurements: List[Any],
+    measurements_df: pd.DataFrame,
     title: str = "Current Measurements Over Time",
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -194,17 +226,15 @@ def _write_timeseries_plot(
     plotted = False
 
     for ammeter_type in ammeters:
-        valid_samples = [
-            sample
-            for sample in measurements
-            if sample.ammeter_type == ammeter_type
-            and sample.status == "ok"
-            and sample.current_a is not None
+        valid_samples_df = measurements_df[
+            measurements_df["ammeter_type"].eq(ammeter_type)
+            & measurements_df["status"].eq("ok")
+            & measurements_df["current_a"].notna()
         ]
-        if valid_samples:
+        if not valid_samples_df.empty:
             plotted = True
-            elapsed_seconds = [sample.elapsed_seconds for sample in valid_samples]
-            current_values = [sample.current_a for sample in valid_samples]
+            elapsed_seconds = valid_samples_df["elapsed_seconds"]
+            current_values = valid_samples_df["current_a"]
             (sample_line,) = ax.plot(
                 elapsed_seconds,
                 current_values,
@@ -213,8 +243,8 @@ def _write_timeseries_plot(
                 label=ammeter_type,
             )
             line_color = sample_line.get_color()
-            mean_current = statistics.mean(current_values)
-            median_current = statistics.median(current_values)
+            mean_current = current_values.mean()
+            median_current = current_values.median()
             ax.axhline(
                 mean_current,
                 color=line_color,
@@ -244,9 +274,3 @@ def _write_timeseries_plot(
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
-
-
-def _csv_value(value: Optional[float]) -> Optional[float]:
-    if value is None:
-        return None
-    return round(value, 10)

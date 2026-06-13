@@ -3,13 +3,14 @@ import time
 import uuid
 import importlib
 import threading
-import statistics
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Type
+
+import pandas as pd
 
 from ..utils.logger import TestLogger
 from ..utils.config import AmmeterConfig, AppConfig, load_config
@@ -53,6 +54,29 @@ class AmmeterAnalytics:
     minimum_current_a: Optional[float]
     maximum_current_a: Optional[float]
     coefficient_of_variation: Optional[float]
+
+
+AMMETER_TYPE_COLUMN = "ammeter_type"
+CURRENT_COLUMN = "current_a"
+STATUS_COLUMN = "status"
+STATUS_OK = "ok"
+STATUS_ERROR = "error"
+
+VALID_SAMPLE_COUNT_COLUMN = "valid_sample_count"
+MEAN_CURRENT_COLUMN = "mean_current_a"
+MEDIAN_CURRENT_COLUMN = "median_current_a"
+STANDARD_DEVIATION_COLUMN = "standard_deviation_a"
+MINIMUM_CURRENT_COLUMN = "minimum_current_a"
+MAXIMUM_CURRENT_COLUMN = "maximum_current_a"
+
+ANALYTICS_AGGREGATIONS = {
+    VALID_SAMPLE_COUNT_COLUMN: "count",
+    MEAN_CURRENT_COLUMN: "mean",
+    MEDIAN_CURRENT_COLUMN: "median",
+    STANDARD_DEVIATION_COLUMN: "std",
+    MINIMUM_CURRENT_COLUMN: "min",
+    MAXIMUM_CURRENT_COLUMN: "max",
+}
 
 
 class AmmeterTestFramework:
@@ -132,9 +156,9 @@ class AmmeterTestFramework:
                 command=ammeter_config.command.encode("utf-8"),
                 timeout_seconds=request_timeout_seconds,
             )
-            status, error, current_a = "ok", "", current
+            status, error, current_a = STATUS_OK, "", current
         except Exception as exc:
-            status, error, current_a = "error", str(exc), None
+            status, error, current_a = STATUS_ERROR, str(exc), None
             self.logger.warning(
                 f"Measurement failed for {ammeter_type} "
                 f"on sample {sample_index}: {exc}"
@@ -201,7 +225,7 @@ class AmmeterTestFramework:
         self, run_id: str, samples: List[MeasurementSample]
     ) -> None:
         self._last_run_ended_at = self._utc_now()
-        failed = sum(1 for sample in samples if sample.status != "ok")
+        failed = sum(1 for sample in samples if sample.status != STATUS_OK)
         self.logger.info(
             f"Measurement run {run_id} completed: "
             f"total_samples={len(samples)}, valid_samples={len(samples) - failed}, "
@@ -243,36 +267,46 @@ class AmmeterTestFramework:
             f"Starting analysis for run {run_id} with {len(measurements)} samples"
         )
         analytics: Dict[str, AmmeterAnalytics] = {}
+        measurements_df = _measurements_to_dataframe(measurements)
+
+        valid_measurements_df = measurements_df[
+            measurements_df[STATUS_COLUMN].eq(STATUS_OK)
+            & measurements_df[CURRENT_COLUMN].notna()
+        ]
+        total_counts = measurements_df.groupby(AMMETER_TYPE_COLUMN).size()
+        stats = valid_measurements_df.groupby(AMMETER_TYPE_COLUMN)[CURRENT_COLUMN].agg(
+            **ANALYTICS_AGGREGATIONS
+        )
 
         for ammeter_type in self.config.ammeters:
-            ammeter_samples = [
-                sample for sample in measurements if sample.ammeter_type == ammeter_type
-            ]
-            valid_values = [
-                sample.current_a
-                for sample in ammeter_samples
-                if sample.status == "ok" and sample.current_a is not None
-            ]
-            if valid_values:
-                mean_current = statistics.mean(valid_values)
-                standard_deviation = (
-                    statistics.stdev(valid_values) if len(valid_values) > 1 else 0.0
+            sample_count = int(total_counts.get(ammeter_type, 0))
+            if ammeter_type in stats.index:
+                ammeter_stats = stats.loc[ammeter_type]
+                valid_sample_count = int(ammeter_stats[VALID_SAMPLE_COUNT_COLUMN])
+                mean_current = _optional_float(ammeter_stats[MEAN_CURRENT_COLUMN])
+                standard_deviation = _optional_float(
+                    ammeter_stats[STANDARD_DEVIATION_COLUMN]
                 )
+                if valid_sample_count == 1:
+                    standard_deviation = 0.0
                 coefficient_of_variation = (
-                    standard_deviation / abs(mean_current) if mean_current != 0 else None
+                    standard_deviation / abs(mean_current)
+                    if mean_current and standard_deviation is not None
+                    else None
                 )
-                median_current = statistics.median(valid_values)
-                minimum_current = min(valid_values)
-                maximum_current = max(valid_values)
+                median_current = _optional_float(ammeter_stats[MEDIAN_CURRENT_COLUMN])
+                minimum_current = _optional_float(ammeter_stats[MINIMUM_CURRENT_COLUMN])
+                maximum_current = _optional_float(ammeter_stats[MAXIMUM_CURRENT_COLUMN])
             else:
+                valid_sample_count = 0
                 mean_current = median_current = standard_deviation = None
                 minimum_current = maximum_current = coefficient_of_variation = None
 
             analytics[ammeter_type] = AmmeterAnalytics(
                 run_id=run_id,
                 ammeter_type=ammeter_type,
-                valid_sample_count=len(valid_values),
-                failed_sample_count=len(ammeter_samples) - len(valid_values),
+                valid_sample_count=valid_sample_count,
+                failed_sample_count=sample_count - valid_sample_count,
                 mean_current_a=mean_current,
                 median_current_a=median_current,
                 standard_deviation_a=standard_deviation,
@@ -328,3 +362,24 @@ class AmmeterTestFramework:
         if self._last_run_id:
             return self._last_run_id
         return str(uuid.uuid4())
+
+
+def _measurements_to_dataframe(measurements: List[MeasurementSample]) -> pd.DataFrame:
+    measurements_df = pd.DataFrame(
+        [asdict(sample) for sample in measurements],
+        columns=_dataclass_field_names(MeasurementSample),
+    )
+    measurements_df[CURRENT_COLUMN] = pd.to_numeric(
+        measurements_df[CURRENT_COLUMN], errors="coerce"
+    )
+    return measurements_df
+
+
+def _dataclass_field_names(model: Type[Any]) -> List[str]:
+    return [field.name for field in fields(model)]
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    if pd.isna(value):
+        return None
+    return float(value)

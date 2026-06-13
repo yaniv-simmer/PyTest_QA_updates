@@ -1,15 +1,48 @@
-import csv
 import json
 import math
-import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import pandas as pd
+
+HISTORICAL_SAMPLE_COLUMNS = ["run_id", "ammeter_type", "status", "current_a"]
+
+HISTORICAL_ANALYTICS_COLUMNS = [
+    "ammeter_type",
+    "source_run_count",
+    "valid_sample_count",
+    "failed_sample_count",
+    "mean_current_a",
+    "median_current_a",
+    "standard_deviation_a",
+    "minimum_current_a",
+    "maximum_current_a",
+    "current_range_a",
+    "coefficient_of_variation",
+    "stability_rank",
+]
+
+HISTORICAL_FLOAT_COLUMNS = [
+    "mean_current_a",
+    "median_current_a",
+    "standard_deviation_a",
+    "minimum_current_a",
+    "maximum_current_a",
+    "current_range_a",
+    "coefficient_of_variation",
+]
+
+HISTORICAL_COUNT_COLUMNS = [
+    "source_run_count",
+    "valid_sample_count",
+    "failed_sample_count",
+    "stability_rank",
+]
 
 
 @dataclass
@@ -40,49 +73,48 @@ def write_historical_accuracy_assessment(output_dir: Path) -> None:
     _write_historical_accuracy_dashboard(
         analytics_dir / "accuracy_assessment_dashboard.png",
         assessments,
-        {
-            ammeter_type: sample_data["valid_values"]
-            for ammeter_type, sample_data in historical_samples.items()
-        },
+        _valid_values_by_ammeter(historical_samples),
     )
 
 
-def _load_historical_samples(output_dir: Path) -> Dict[str, Dict[str, Any]]:
-    historical_samples: Dict[str, Dict[str, Any]] = {}
+def _load_historical_samples(output_dir: Path) -> pd.DataFrame:
+    historical_frames: List[pd.DataFrame] = []
     samples_dir = output_dir / "samples"
     if not samples_dir.exists():
-        return historical_samples
+        return pd.DataFrame(columns=HISTORICAL_SAMPLE_COLUMNS)
 
     for run_dir in sorted(path for path in samples_dir.iterdir() if path.is_dir()):
         for ammeter_type, sample_path in _sample_paths_for_run(run_dir).items():
             if not sample_path.exists():
                 continue
 
-            sample_data = historical_samples.setdefault(
-                ammeter_type,
-                {
-                    "valid_values": [],
-                    "failed_sample_count": 0,
-                    "source_run_ids": set(),
-                },
-            )
+            try:
+                sample_df = pd.read_csv(sample_path)
+            except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+                continue
 
-            has_rows = False
-            with sample_path.open(newline="", encoding="utf-8") as csv_file:
-                reader = csv.DictReader(csv_file)
-                for row in reader:
-                    has_rows = True
-                    status = (row.get("status") or "").strip().lower()
-                    current = _parse_current(row.get("current_a"))
+            if sample_df.empty:
+                continue
+            if "status" not in sample_df.columns:
+                sample_df["status"] = ""
+            if "current_a" not in sample_df.columns:
+                sample_df["current_a"] = pd.NA
 
-                    if status in ("", "ok") and current is not None:
-                        sample_data["valid_values"].append(current)
-                    else:
-                        sample_data["failed_sample_count"] += 1
+            sample_df = sample_df.assign(run_id=run_dir.name, ammeter_type=ammeter_type)
+            historical_frames.append(sample_df.reindex(columns=HISTORICAL_SAMPLE_COLUMNS))
 
-            if has_rows:
-                sample_data["source_run_ids"].add(run_dir.name)
+    if not historical_frames:
+        return pd.DataFrame(columns=HISTORICAL_SAMPLE_COLUMNS)
 
+    historical_samples = pd.concat(historical_frames, ignore_index=True)
+    historical_samples["status"] = (
+        historical_samples["status"].fillna("").astype(str).str.strip().str.lower()
+    )
+    historical_samples["current_a"] = pd.to_numeric(
+        historical_samples["current_a"], errors="coerce"
+    )
+    finite_current = historical_samples["current_a"].map(math.isfinite)
+    historical_samples.loc[~finite_current, "current_a"] = pd.NA
     return historical_samples
 
 
@@ -115,41 +147,41 @@ def _sample_paths_for_run(run_dir: Path) -> Dict[str, Path]:
     return sample_paths
 
 
-def _parse_current(value: Any) -> Optional[float]:
-    try:
-        current = float(value)
-    except (TypeError, ValueError):
-        return None
-    return current if math.isfinite(current) else None
-
-
 def _analyze_historical_samples(
-    historical_samples: Dict[str, Dict[str, Any]],
+    historical_samples: pd.DataFrame,
 ) -> List[HistoricalAccuracyAssessment]:
+    if historical_samples.empty:
+        return []
+
     assessments: List[HistoricalAccuracyAssessment] = []
+    historical_samples = historical_samples.copy()
+    historical_samples["is_valid"] = (
+        historical_samples["status"].isin(("", "ok"))
+        & historical_samples["current_a"].notna()
+    )
 
-    for ammeter_type, sample_data in historical_samples.items():
-        valid_values = sample_data["valid_values"]
-        failed_sample_count = int(sample_data["failed_sample_count"])
-        source_run_ids: Set[str] = sample_data["source_run_ids"]
+    for ammeter_type, sample_df in historical_samples.groupby("ammeter_type", sort=False):
+        valid_values = sample_df.loc[sample_df["is_valid"], "current_a"]
+        failed_sample_count = int((~sample_df["is_valid"]).sum())
+        source_run_count = int(sample_df["run_id"].nunique())
 
-        if valid_values:
-            mean_current = statistics.mean(valid_values)
+        if not valid_values.empty:
+            mean_current = float(valid_values.mean())
             standard_deviation = (
-                statistics.stdev(valid_values) if len(valid_values) > 1 else 0.0
+                float(valid_values.std(ddof=1)) if len(valid_values) > 1 else 0.0
             )
-            minimum_current = min(valid_values)
-            maximum_current = max(valid_values)
+            minimum_current = float(valid_values.min())
+            maximum_current = float(valid_values.max())
             coefficient_of_variation = (
                 standard_deviation / abs(mean_current) if mean_current != 0 else None
             )
             assessment = HistoricalAccuracyAssessment(
                 ammeter_type=ammeter_type,
-                source_run_count=len(source_run_ids),
+                source_run_count=source_run_count,
                 valid_sample_count=len(valid_values),
                 failed_sample_count=failed_sample_count,
                 mean_current_a=mean_current,
-                median_current_a=statistics.median(valid_values),
+                median_current_a=float(valid_values.median()),
                 standard_deviation_a=standard_deviation,
                 minimum_current_a=minimum_current,
                 maximum_current_a=maximum_current,
@@ -160,7 +192,7 @@ def _analyze_historical_samples(
         else:
             assessment = HistoricalAccuracyAssessment(
                 ammeter_type=ammeter_type,
-                source_run_count=len(source_run_ids),
+                source_run_count=source_run_count,
                 valid_sample_count=0,
                 failed_sample_count=failed_sample_count,
                 mean_current_a=None,
@@ -199,30 +231,32 @@ def _write_historical_accuracy_csv(
     assessments: List[HistoricalAccuracyAssessment],
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "ammeter_type",
-        "source_run_count",
-        "valid_sample_count",
-        "failed_sample_count",
-        "mean_current_a",
-        "median_current_a",
-        "standard_deviation_a",
-        "minimum_current_a",
-        "maximum_current_a",
-        "current_range_a",
-        "coefficient_of_variation",
-        "stability_rank",
-    ]
+    csv_df = pd.DataFrame(
+        [
+            asdict(assessment)
+            for assessment in sorted(assessments, key=_assessment_sort_key)
+        ],
+        columns=HISTORICAL_ANALYTICS_COLUMNS,
+    )
+    for column in HISTORICAL_FLOAT_COLUMNS:
+        csv_df[column] = pd.to_numeric(csv_df[column], errors="coerce").round(10)
+    for column in HISTORICAL_COUNT_COLUMNS:
+        csv_df[column] = pd.to_numeric(csv_df[column], errors="coerce").astype("Int64")
+    csv_df.to_csv(output_path, index=False)
 
-    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer.writeheader()
-        for assessment in sorted(assessments, key=_assessment_sort_key):
-            row = asdict(assessment)
-            for fieldname in fieldnames:
-                if isinstance(row[fieldname], float):
-                    row[fieldname] = _csv_value(row[fieldname])
-            writer.writerow(row)
+
+def _valid_values_by_ammeter(historical_samples: pd.DataFrame) -> Dict[str, List[float]]:
+    if historical_samples.empty:
+        return {}
+
+    valid_samples = historical_samples[
+        historical_samples["status"].isin(("", "ok"))
+        & historical_samples["current_a"].notna()
+    ]
+    return {
+        str(ammeter_type): sample_df["current_a"].tolist()
+        for ammeter_type, sample_df in valid_samples.groupby("ammeter_type", sort=False)
+    }
 
 
 def _write_historical_accuracy_dashboard(
@@ -371,9 +405,3 @@ def _format_metric(value: Optional[float]) -> str:
     if value is None:
         return ""
     return f"{value:.6g}"
-
-
-def _csv_value(value: Optional[float]) -> Optional[float]:
-    if value is None:
-        return None
-    return round(value, 10)
