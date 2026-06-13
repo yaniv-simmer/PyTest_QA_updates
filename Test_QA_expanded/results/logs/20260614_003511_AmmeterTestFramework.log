@@ -1,0 +1,16 @@
+2026-06-14 00:35:11,872 | INFO | test_AmmeterTestFramework_1363182723792 | Loading config from config/config.yaml
+2026-06-14 00:35:11,872 | INFO | test_AmmeterTestFramework_1363182723792 | Config loaded from config/config.yaml
+2026-06-14 00:35:11,872 | INFO | test_AmmeterTestFramework_1363182723792 | Starting configured ammeter emulators
+2026-06-14 00:35:11,872 | INFO | test_AmmeterTestFramework_1363182723792 | Started greenlee emulator on port 5000
+2026-06-14 00:35:11,872 | INFO | test_AmmeterTestFramework_1363182723792 | Started entes emulator on port 5001
+2026-06-14 00:35:11,872 | INFO | test_AmmeterTestFramework_1363182723792 | Started circutor emulator on port 5002
+2026-06-14 00:35:16,880 | INFO | test_AmmeterTestFramework_1363182723792 | All emulators started successfully
+2026-06-14 00:35:16,880 | INFO | test_AmmeterTestFramework_1363182723792 | Starting measurement run c79d1654-e39f-4765-9f29-4d42f4867000: duration=5.0s, frequency=30.0Hz, samples=150, interval=0.03333333333333333s
+2026-06-14 00:35:18,847 | WARNING | test_AmmeterTestFramework_1363182723792 | Measurement run c79d1654-e39f-4765-9f29-4d42f4867000: sampling loop is late for sample 60 by 0.0023s
+2026-06-14 00:35:19,322 | WARNING | test_AmmeterTestFramework_1363182723792 | Measurement run c79d1654-e39f-4765-9f29-4d42f4867000: sampling loop is late for sample 74 by 0.0047s
+2026-06-14 00:35:20,588 | WARNING | test_AmmeterTestFramework_1363182723792 | Measurement run c79d1654-e39f-4765-9f29-4d42f4867000: sampling loop is late for sample 112 by 0.0030s
+2026-06-14 00:35:21,871 | INFO | test_AmmeterTestFramework_1363182723792 | Measurement run c79d1654-e39f-4765-9f29-4d42f4867000 completed: total_samples=450, valid_samples=450, failed_samples=0
+2026-06-14 00:35:21,871 | INFO | test_AmmeterTestFramework_1363182723792 | Starting analysis for run c79d1654-e39f-4765-9f29-4d42f4867000 with 450 samples
+2026-06-14 00:35:21,879 | INFO | test_AmmeterTestFramework_1363182723792 | Analysis completed for run c79d1654-e39f-4765-9f29-4d42f4867000: greenlee: valid=150, failed=0, entes: valid=150, failed=0, circutor: valid=150, failed=0
+2026-06-14 00:35:21,879 | INFO | test_AmmeterTestFramework_1363182723792 | Saving results for run c79d1654-e39f-4765-9f29-4d42f4867000
+2026-06-14 00:35:23,267 | INFO | test_AmmeterTestFramework_1363182723792 | Results for run c79d1654-e39f-4765-9f29-4d42f4867000 saved to results\samples\c79d1654-e39f-4765-9f29-4d42f4867000
