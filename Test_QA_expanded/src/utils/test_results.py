@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import matplotlib
 
@@ -54,6 +54,8 @@ ANALYTICS_FLOAT_COLUMNS = [
     "coefficient_of_variation",
 ]
 
+STATUS_OK = "ok"
+
 
 @dataclass
 class TestRunMetadata:
@@ -71,8 +73,8 @@ class TestRunMetadata:
 
 def save_test_results(
     config: AppConfig,
-    measurements: List[Any],
-    analysis: Dict[str, Any],
+    measurements_df: pd.DataFrame,
+    analysis_df: pd.DataFrame,
     run_id: str,
     started_at_utc: str,
     ended_at_utc: str,
@@ -96,8 +98,8 @@ def save_test_results(
             "time_series_plot": "analytics/time_series.png",
         },
     }
-    measurements_df = _measurements_to_dataframe(measurements)
-    analytics_df = _analytics_to_dataframe(config.ammeters, analysis)
+    measurements_df = _normalize_measurements_dataframe(measurements_df)
+    analysis_df = _normalize_analysis_dataframe(analysis_df)
 
     for ammeter_type, sample_artifact in sample_artifacts.items():
         ammeter_measurements_df = measurements_df[
@@ -113,7 +115,7 @@ def save_test_results(
 
     _write_analytics_csv(
         run_dir / artifacts["analytics"]["csv"],
-        analytics_df,
+        analysis_df,
     )
     _write_timeseries_plot(
         run_dir / artifacts["analytics"]["time_series_plot"],
@@ -134,31 +136,18 @@ def save_test_results(
     return run_dir
 
 
-def _measurements_to_dataframe(measurements: List[Any]) -> pd.DataFrame:
-    measurements_df = pd.DataFrame(
-        [asdict(sample) for sample in measurements],
-        columns=MEASUREMENT_COLUMNS,
-    )
+def _normalize_measurements_dataframe(measurements_df: pd.DataFrame) -> pd.DataFrame:
+    measurements_df = measurements_df.reindex(columns=MEASUREMENT_COLUMNS).copy()
     for column in ("elapsed_seconds", "current_a"):
         measurements_df[column] = pd.to_numeric(measurements_df[column], errors="coerce")
     return measurements_df
 
 
-def _analytics_to_dataframe(
-    ammeters: Dict[str, AmmeterConfig], analysis: Dict[str, Any]
-) -> pd.DataFrame:
-    rows = [
-        {
-            key: value
-            for key, value in asdict(analysis[ammeter_type]).items()
-            if key != "run_id"
-        }
-        for ammeter_type in ammeters
-    ]
-    analytics_df = pd.DataFrame(rows, columns=ANALYTICS_CSV_COLUMNS)
+def _normalize_analysis_dataframe(analysis_df: pd.DataFrame) -> pd.DataFrame:
+    analysis_df = analysis_df.reindex(columns=ANALYTICS_CSV_COLUMNS).copy()
     for column in ANALYTICS_FLOAT_COLUMNS:
-        analytics_df[column] = pd.to_numeric(analytics_df[column], errors="coerce")
-    return analytics_df
+        analysis_df[column] = pd.to_numeric(analysis_df[column], errors="coerce")
+    return analysis_df
 
 
 def _write_samples_csv(output_path: Path, measurements_df: pd.DataFrame) -> None:
@@ -187,7 +176,7 @@ def _write_metadata_json(
     ended_at_utc: str,
 ) -> None:
     total_samples = len(measurements_df)
-    failed_samples = int(measurements_df["status"].ne("ok").sum())
+    failed_samples = int(measurements_df["status"].ne(STATUS_OK).sum())
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     metadata = TestRunMetadata(
@@ -228,7 +217,7 @@ def _write_timeseries_plot(
     for ammeter_type in ammeters:
         valid_samples_df = measurements_df[
             measurements_df["ammeter_type"].eq(ammeter_type)
-            & measurements_df["status"].eq("ok")
+            & measurements_df["status"].eq(STATUS_OK)
             & measurements_df["current_a"].notna()
         ]
         if not valid_samples_df.empty:

@@ -42,32 +42,35 @@ class SamplingPlan:
     request_timeout_seconds: float = 1.0
 
 
-@dataclass
-class AmmeterAnalytics:
-    run_id: str
-    ammeter_type: str
-    valid_sample_count: int
-    failed_sample_count: int
-    mean_current_a: Optional[float]
-    median_current_a: Optional[float]
-    standard_deviation_a: Optional[float]
-    minimum_current_a: Optional[float]
-    maximum_current_a: Optional[float]
-    coefficient_of_variation: Optional[float]
-
-
+RUN_ID_COLUMN = "run_id"
 AMMETER_TYPE_COLUMN = "ammeter_type"
+TIMESTAMP_UTC_COLUMN = "timestamp_utc"
 CURRENT_COLUMN = "current_a"
 STATUS_COLUMN = "status"
 STATUS_OK = "ok"
 STATUS_ERROR = "error"
 
 VALID_SAMPLE_COUNT_COLUMN = "valid_sample_count"
+FAILED_SAMPLE_COUNT_COLUMN = "failed_sample_count"
 MEAN_CURRENT_COLUMN = "mean_current_a"
 MEDIAN_CURRENT_COLUMN = "median_current_a"
 STANDARD_DEVIATION_COLUMN = "standard_deviation_a"
 MINIMUM_CURRENT_COLUMN = "minimum_current_a"
 MAXIMUM_CURRENT_COLUMN = "maximum_current_a"
+COEFFICIENT_OF_VARIATION_COLUMN = "coefficient_of_variation"
+
+ANALYTICS_COLUMNS = [
+    RUN_ID_COLUMN,
+    AMMETER_TYPE_COLUMN,
+    VALID_SAMPLE_COUNT_COLUMN,
+    FAILED_SAMPLE_COUNT_COLUMN,
+    MEAN_CURRENT_COLUMN,
+    MEDIAN_CURRENT_COLUMN,
+    STANDARD_DEVIATION_COLUMN,
+    MINIMUM_CURRENT_COLUMN,
+    MAXIMUM_CURRENT_COLUMN,
+    COEFFICIENT_OF_VARIATION_COLUMN,
+]
 
 ANALYTICS_AGGREGATIONS = {
     VALID_SAMPLE_COUNT_COLUMN: "count",
@@ -232,7 +235,7 @@ class AmmeterTestFramework:
             f"failed_samples={failed}"
         )
 
-    def run_tests(self) -> List[MeasurementSample]:
+    def run_tests(self) -> pd.DataFrame:
         """Collect current measurements from every configured ammeter."""
         ammeters: Dict[str, AmmeterConfig] = self.config.ammeters
         plan: SamplingPlan = self._sampling_plan()
@@ -258,16 +261,16 @@ class AmmeterTestFramework:
                 samples.extend(batch)
 
         self._finish_measurement_run(run_id, samples)
-        return samples
+        return _measurements_to_dataframe(samples)
 
-    def analyze(self, measurements: List[MeasurementSample]) -> Dict[str, AmmeterAnalytics]:
+    def analyze(self, measurements_df: pd.DataFrame) -> pd.DataFrame:
         """Compute statistical metrics for each configured ammeter."""
-        run_id = self._run_id_from_samples(measurements)
+        measurements_df = _normalize_measurements_dataframe(measurements_df)
+        run_id = self._run_id_from_measurements(measurements_df)
         self.logger.info(
-            f"Starting analysis for run {run_id} with {len(measurements)} samples"
+            f"Starting analysis for run {run_id} with {len(measurements_df)} samples"
         )
-        analytics: Dict[str, AmmeterAnalytics] = {}
-        measurements_df = _measurements_to_dataframe(measurements)
+        analytics_rows: List[Dict[str, Any]] = []
 
         valid_measurements_df = measurements_df[
             measurements_df[STATUS_COLUMN].eq(STATUS_OK)
@@ -302,49 +305,61 @@ class AmmeterTestFramework:
                 mean_current = median_current = standard_deviation = None
                 minimum_current = maximum_current = coefficient_of_variation = None
 
-            analytics[ammeter_type] = AmmeterAnalytics(
-                run_id=run_id,
-                ammeter_type=ammeter_type,
-                valid_sample_count=valid_sample_count,
-                failed_sample_count=sample_count - valid_sample_count,
-                mean_current_a=mean_current,
-                median_current_a=median_current,
-                standard_deviation_a=standard_deviation,
-                minimum_current_a=minimum_current,
-                maximum_current_a=maximum_current,
-                coefficient_of_variation=coefficient_of_variation,
+            analytics_rows.append(
+                {
+                    RUN_ID_COLUMN: run_id,
+                    AMMETER_TYPE_COLUMN: ammeter_type,
+                    VALID_SAMPLE_COUNT_COLUMN: valid_sample_count,
+                    FAILED_SAMPLE_COUNT_COLUMN: sample_count - valid_sample_count,
+                    MEAN_CURRENT_COLUMN: mean_current,
+                    MEDIAN_CURRENT_COLUMN: median_current,
+                    STANDARD_DEVIATION_COLUMN: standard_deviation,
+                    MINIMUM_CURRENT_COLUMN: minimum_current,
+                    MAXIMUM_CURRENT_COLUMN: maximum_current,
+                    COEFFICIENT_OF_VARIATION_COLUMN: coefficient_of_variation,
+                }
             )
 
+        analytics_df = pd.DataFrame(analytics_rows, columns=ANALYTICS_COLUMNS)
         summary = ", ".join(
-            f"{ammeter_type}: valid={result.valid_sample_count}, "
-            f"failed={result.failed_sample_count}"
-            for ammeter_type, result in analytics.items()
+            f"{row[AMMETER_TYPE_COLUMN]}: valid={row[VALID_SAMPLE_COUNT_COLUMN]}, "
+            f"failed={row[FAILED_SAMPLE_COUNT_COLUMN]}"
+            for _, row in analytics_df.iterrows()
         )
         self.logger.info(f"Analysis completed for run {run_id}: {summary}")
-        return analytics
+        return analytics_df
 
     def save_results(
         self,
-        measurements: List[MeasurementSample],
-        analysis: Dict[str, AmmeterAnalytics],
+        measurements_df: pd.DataFrame,
+        analysis_df: pd.DataFrame,
     ) -> Path:
         """Archive per-ammeter samples, analytics, metadata, and plots for a run."""
+        measurements_df = _normalize_measurements_dataframe(measurements_df)
         started_at = (
             self._last_run_started_at
-            or (measurements[0].timestamp_utc if measurements else self._utc_now())
+            or (
+                str(measurements_df.iloc[0][TIMESTAMP_UTC_COLUMN])
+                if not measurements_df.empty
+                else self._utc_now()
+            )
         )
         ended_at = (
             self._last_run_ended_at
-            or (measurements[-1].timestamp_utc if measurements else self._utc_now())
+            or (
+                str(measurements_df.iloc[-1][TIMESTAMP_UTC_COLUMN])
+                if not measurements_df.empty
+                else self._utc_now()
+            )
         )
 
-        run_id = self._run_id_from_samples(measurements)
+        run_id = self._run_id_from_measurements(measurements_df)
         self.logger.info(f"Saving results for run {run_id}")
         try:
             result_path = save_test_results(
                 config=self.config,
-                measurements=measurements,
-                analysis=analysis,
+                measurements_df=measurements_df,
+                analysis_df=analysis_df,
                 run_id=run_id,
                 started_at_utc=started_at,
                 ended_at_utc=ended_at,
@@ -356,9 +371,9 @@ class AmmeterTestFramework:
         self.logger.info(f"Results for run {run_id} saved to {result_path}")
         return result_path
 
-    def _run_id_from_samples(self, measurements: List[MeasurementSample]) -> str:
-        if measurements:
-            return measurements[0].run_id
+    def _run_id_from_measurements(self, measurements_df: pd.DataFrame) -> str:
+        if not measurements_df.empty:
+            return str(measurements_df.iloc[0][RUN_ID_COLUMN])
         if self._last_run_id:
             return self._last_run_id
         return str(uuid.uuid4())
@@ -369,6 +384,13 @@ def _measurements_to_dataframe(measurements: List[MeasurementSample]) -> pd.Data
         [asdict(sample) for sample in measurements],
         columns=_dataclass_field_names(MeasurementSample),
     )
+    return _normalize_measurements_dataframe(measurements_df)
+
+
+def _normalize_measurements_dataframe(measurements_df: pd.DataFrame) -> pd.DataFrame:
+    measurements_df = measurements_df.reindex(
+        columns=_dataclass_field_names(MeasurementSample)
+    ).copy()
     measurements_df[CURRENT_COLUMN] = pd.to_numeric(
         measurements_df[CURRENT_COLUMN], errors="coerce"
     )
