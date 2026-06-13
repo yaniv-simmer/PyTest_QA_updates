@@ -264,7 +264,7 @@ def _write_historical_accuracy_dashboard(
     ]
     box_data = [values_by_ammeter[name] for name in ammeter_names]
 
-    box_plot = ax_box.boxplot(box_data, labels=ammeter_names, patch_artist=True)
+    box_plot = ax_box.boxplot(box_data, tick_labels=ammeter_names, patch_artist=True)
     for patch, color in zip(box_plot["boxes"], highlight_colors):
         patch.set_facecolor(color)
         patch.set_alpha(0.65)
