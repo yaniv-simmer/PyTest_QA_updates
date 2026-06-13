@@ -31,13 +31,14 @@ class HistoricalAccuracyAssessment:
 def write_historical_accuracy_assessment(output_dir: Path) -> None:
     historical_samples = _load_historical_samples(output_dir)
     assessments = _analyze_historical_samples(historical_samples)
+    analytics_dir = output_dir / "analytics"
 
     _write_historical_accuracy_csv(
-        output_dir / "accuracy_assessment.csv",
+        analytics_dir / "accuracy_assessment_analytics.csv",
         assessments,
     )
     _write_historical_accuracy_dashboard(
-        output_dir / "accuracy_assessment_dashboard.png",
+        analytics_dir / "accuracy_assessment_dashboard.png",
         assessments,
         {
             ammeter_type: sample_data["valid_values"]
@@ -48,10 +49,11 @@ def write_historical_accuracy_assessment(output_dir: Path) -> None:
 
 def _load_historical_samples(output_dir: Path) -> Dict[str, Dict[str, Any]]:
     historical_samples: Dict[str, Dict[str, Any]] = {}
-    if not output_dir.exists():
+    samples_dir = output_dir / "samples"
+    if not samples_dir.exists():
         return historical_samples
 
-    for run_dir in sorted(path for path in output_dir.iterdir() if path.is_dir()):
+    for run_dir in sorted(path for path in samples_dir.iterdir() if path.is_dir()):
         for ammeter_type, sample_path in _sample_paths_for_run(run_dir).items():
             if not sample_path.exists():
                 continue
@@ -94,15 +96,21 @@ def _sample_paths_for_run(run_dir: Path) -> Dict[str, Path]:
                 metadata = json.load(metadata_file)
             samples = metadata.get("artifacts", {}).get("samples", {})
             if isinstance(samples, dict):
-                for ammeter_type, sample_filename in samples.items():
+                for ammeter_type, sample_artifact in samples.items():
+                    sample_filename = sample_artifact
+                    if isinstance(sample_artifact, dict):
+                        sample_filename = sample_artifact.get("csv")
                     if sample_filename:
                         sample_paths[str(ammeter_type)] = run_dir / str(sample_filename)
         except (OSError, json.JSONDecodeError):
             pass
 
-    for sample_path in sorted(run_dir.glob("*_samples.csv")):
-        ammeter_type = sample_path.name[: -len("_samples.csv")]
-        sample_paths.setdefault(ammeter_type, sample_path)
+    for ammeter_dir in sorted(path for path in run_dir.iterdir() if path.is_dir()):
+        if ammeter_dir.name == "analytics":
+            continue
+        sample_path = ammeter_dir / f"{ammeter_dir.name}_samples.csv"
+        if sample_path.exists():
+            sample_paths.setdefault(ammeter_dir.name, sample_path)
 
     return sample_paths
 
@@ -190,6 +198,7 @@ def _write_historical_accuracy_csv(
     output_path: Path,
     assessments: List[HistoricalAccuracyAssessment],
 ) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "ammeter_type",
         "source_run_count",
@@ -221,6 +230,7 @@ def _write_historical_accuracy_dashboard(
     assessments: List[HistoricalAccuracyAssessment],
     values_by_ammeter: Dict[str, List[float]],
 ) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     sorted_assessments = sorted(assessments, key=_assessment_sort_key)
     valid_assessments = [
         assessment

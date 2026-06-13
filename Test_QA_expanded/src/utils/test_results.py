@@ -35,33 +35,44 @@ def save_test_results(
     ended_at_utc: str,
 ) -> Path:
     output_dir = Path(config.get("result_management", {}).get("output_dir", "results"))
-    run_dir = output_dir / run_id
+    run_dir = output_dir / "samples" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    sample_artifacts = {
-        ammeter_type: f"{ammeter_type}_samples.csv"
-        for ammeter_type in config.get("ammeters", {})
-    }
+    sample_artifacts = {}
+    for ammeter_type in config.get("ammeters", {}):
+        sample_artifacts[ammeter_type] = {
+            "csv": f"{ammeter_type}/{ammeter_type}_samples.csv",
+            "time_series_plot": f"{ammeter_type}/time_series.png",
+        }
+
     artifacts = {
         "samples": sample_artifacts,
-        "analytics": "analytics.csv",
         "metadata": "metadata.json",
-        "timeseries_plot": "current_timeseries.png",
+        "analytics": {
+            "csv": "analytics/analytics.csv",
+            "time_series_plot": "analytics/time_series.png",
+        },
     }
 
-    for ammeter_type, sample_filename in sample_artifacts.items():
+    for ammeter_type, sample_artifact in sample_artifacts.items():
         ammeter_measurements = [
             sample for sample in measurements if sample.ammeter_type == ammeter_type
         ]
-        _write_samples_csv(run_dir / sample_filename, ammeter_measurements)
+        _write_samples_csv(run_dir / sample_artifact["csv"], ammeter_measurements)
+        _write_timeseries_plot(
+            run_dir / sample_artifact["time_series_plot"],
+            {ammeter_type: config.get("ammeters", {})[ammeter_type]},
+            ammeter_measurements,
+            title=f"{ammeter_type} Current Measurements Over Time",
+        )
 
     _write_analytics_csv(
-        run_dir / artifacts["analytics"],
+        run_dir / artifacts["analytics"]["csv"],
         config.get("ammeters", {}),
         analysis,
     )
     _write_timeseries_plot(
-        run_dir / artifacts["timeseries_plot"],
+        run_dir / artifacts["analytics"]["time_series_plot"],
         config.get("ammeters", {}),
         measurements,
     )
@@ -80,6 +91,7 @@ def save_test_results(
 
 
 def _write_samples_csv(output_path: Path, measurements: List[Any]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "sample_index",
         "ammeter_type",
@@ -106,6 +118,7 @@ def _write_analytics_csv(
     ammeters: Dict[str, Any],
     analysis: Dict[str, Any],
 ) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "ammeter_type",
         "valid_sample_count",
@@ -141,6 +154,7 @@ def _write_metadata_json(
 ) -> None:
     total_samples = len(measurements)
     failed_samples = sum(1 for sample in measurements if sample.status != "ok")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     metadata = TestRunMetadata(
         run_id=run_id,
@@ -163,7 +177,9 @@ def _write_timeseries_plot(
     output_path: Path,
     ammeters: Dict[str, Any],
     measurements: List[Any],
+    title: str = "Current Measurements Over Time",
 ) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(10, 6))
     plotted = False
 
@@ -188,7 +204,7 @@ def _write_timeseries_plot(
     if not plotted:
         ax.text(0.5, 0.5, "No valid samples collected", ha="center", va="center")
 
-    ax.set_title("Current Measurements Over Time")
+    ax.set_title(title)
     ax.set_xlabel("Elapsed time (seconds)")
     ax.set_ylabel("Current (A)")
     ax.grid(True, alpha=0.3)
