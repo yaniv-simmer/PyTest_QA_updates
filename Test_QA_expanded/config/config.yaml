@@ -2,7 +2,7 @@ testing:
   sampling:
     measurements_count: NULL
     total_duration_seconds: 5
-    sampling_frequency_hz: 3
+    sampling_frequency_hz: 30
 
 ammeters:
   greenlee:
