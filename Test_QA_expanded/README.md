@@ -6,85 +6,89 @@ Built with `Python 3.12.10`
 
 ## Table of Contents
 
-- [Application Flow](#application-flow)
-- [Overview](#overview)
+- [Overview and Application Flow](#overview-and-application-flow)
 - [Project Structure](#project-structure)
 - [Setup and Usage](#setup-and-usage)
 - [Configuration-Driven Design](#configuration-driven-design)
 - [Results and Analytics](#results-and-analytics)
 - [Design Decisions](#design-decisions)
 
-## Application Flow
+## Overview and Application Flow
 
-The application flow is:
+The assignment asks for a comprehensive test framework for multiple current measurement systems. This implementation starts simulated ammeter devices, samples each device through the same socket-based client interface, analyzes the collected current values, and archives every run so results can be inspected or compared later.
 
-1. [main.py](main.py) creates an `AmmeterTestFramework` instance using [config/config.yaml](config/config.yaml).
-2. The framework loads and validates the configuration.
-3. Each configured ammeter class is dynamically imported from its module path.
-4. Every configured emulator is started in its own daemon thread.
-5. The framework calculates a sampling plan from the configured duration and frequency.
-6. On each sample cycle, the framework queries all configured ammeters through the socket client.
-7. Each measurement is stored with run ID, sample index, ammeter type, timestamp, elapsed time, current value, status, and error text.
-8. Measurements are collected into a pandas DataFrame.
-9. The analysis step computes per-ammeter statistics.
-10. The result writer archives the run under a unique UUID.
-11. Historical analytics are regenerated from all saved sample runs.
+### Main components:
 
-## Overview
+- [main.py](main.py): Entry point that runs the full test flow.
+- [config.yaml](config/config.yaml): Runtime control file for sampling settings, ammeter registration, commands, ports, and output location.
+- [test_framework.py](src/testing/test_framework.py): Orchestrator that loads configuration, starts emulators, collects measurements, analyzes data, and triggers result writing.
+- [utils/](src/utils/): Supporting utilities for configuration loading, logging, run archival, plotting, and historical accuracy assessment.
 
-The assignment asks for a comprehensive test framework for multiple current measurement systems. This implementation provides:
+### Application flow:
 
-- A unified interface for running different ammeter emulators.
-- Configurable sampling duration and frequency.
-- Per-sample status and error tracking.
-- Statistical analysis for each ammeter.
-- CSV, JSON, plot, log, and historical analytics output.
-- A configuration-driven architecture so new ammeters can be added with minimal framework changes.
+1. [main.py](main.py) creates an `AmmeterTestFramework` using [config.yaml](config/config.yaml).
+2. The framework dynamically loads and validates the configured ammeter definitions and starts each emulator in a separate daemon thread.
+3. A sampling plan is calculated from the configured duration and frequency.
+4. During each sample cycle, the framework queries all configured ammeters through the unified socket client.
+5. Measurements are stored with timing, status, error information, and current value, then collected into a pandas DataFrame.
+6. The analysis step calculates per-ammeter statistics and stability metrics.
+7. The result utilities save CSV, JSON, plots, logs, and refreshed historical analytics under [results/](results/).
+
+## Features
+
+### Unified Ammeter Interface
+
+Each ammeter has different internal measurement logic, but the framework talks to all of them through the same request path.
+
+### Configurable Sampling
+
+Sampling behavior is controlled from [config/config.yaml](config/config.yaml). The framework derives the number of sample cycles from the total duration and sampling frequency, then records every successful or failed measurement with enough metadata to debug the run.
+
+### Analysis and Accuracy Assessment
+
+The analysis step calculates mean, median, standard deviation, minimum, maximum, failed sample count, and coefficient of variation for each ammeter. Historical analytics reuse saved runs to compare measurement stability over time.
+
+### Result Archiving
+
+Every run is stored under a unique UUID in [results/samples/](results/samples/). Each archive contains raw samples, metadata, plots, per-run analytics, and a combined view for the configured ammeters.
 
 ## Project Structure
 
 ```text
 Test_QA_expanded/
-|-- Ammeters/ : Ammeter emulator implementations and socket communication code.
-|   |-- base_ammeter.py : Abstract base class that defines the emulator interface.
-|   |-- client.py : Socket client used to request measurements from emulator servers.
-|   |-- Greenlee_Ammeter.py : Greenlee emulator using Ohm's Law style measurement logic.
-|   |-- Entes_Ammeter.py : ENTES emulator using Hall Effect style measurement logic.
-|   `-- Circutor_Ammeter.py : CIRCUTOR emulator using Rogowski coil style integration.
-|-- config/ : Runtime configuration files.
-|   `-- config.yaml : Sampling settings, ammeter registration, commands, ports, and output path.
-|-- Exam/ : Original assignment material.
-|   |-- ammeter-test-specification.md : Markdown version of the assignment requirements.
-|   `-- ammeter-test-specification.pdf : PDF version of the assignment requirements.
-|-- examples/ : Optional example scripts.
-|   `-- run_tests.py : Example runner for experimenting with the framework.
-|-- results/ : Generated output from framework executions.
-|   |-- analytics/ : Historical cross-run analytics and dashboard output.
-|   |-- logs/ : Framework log files.
-|   `-- samples/ : Per-run archived samples, metadata, analytics, and plots.
-|-- src/ : Main framework implementation.
-|   |-- testing/ : Test orchestration logic.
-|   |   `-- test_framework.py : Loads config, starts emulators, samples data, analyzes, and saves results.
-|   `-- utils/ : Supporting utilities for configuration, logging, output, and analytics.
-|       |-- accuracy_assessment.py : Builds historical stability analytics across saved runs.
-|       |-- config.py : Loads and validates YAML config into structured application settings.
-|       |-- logger.py : Creates timestamped framework logs.
-|       |-- test_results.py : Writes run CSV files, metadata JSON, and plots.
-|       `-- Utils.py : Shared helper functions used by the emulators.
-|-- main.py : Main entry point for running the complete test flow.
-|-- requirements.txt : Python dependencies required by the project.
-`-- README.md : Project documentation.
+├── Ammeters/                      : Original assignment material.
+├── config/
+│   └── config.yaml
+├── Exam/                          : Original assignment material.
+├── examples/                      : Original assignment material.
+├── results/                       : Generated output from framework executions.
+│   ├── analytics/                 : Compare measurements across different ammeter types 
+│   ├── logs/                      
+│   └── samples/
+├── src/                           
+│   ├── testing/                   
+│   │   └── test_framework.py
+│   └── utils/                     : Supporting utilities for configuration, logging, output, and analytics.
+│       ├── accuracy_assessment.py : Builds historical stability analytics across different ammeter types.
+│       ├── config.py              
+│       ├── test_results.py
+│       └── Utils.py        
+├── main.py                        : Main entry point for running the complete test flow.
+├── requirements.txt
+└── README.md 
 ```
 
 ## Setup and Usage
 
-From the repository root, create and activate a virtual environment, then install dependencies from [requirements.txt](requirements.txt):
+From Windows CMD, create and activate a virtual environment, then install dependencies from [requirements.txt](requirements.txt):
+
+> On macOS or Linux, use `source .venv/bin/activate` instead of the Windows activation command.
 
 ```powershell
 cd Test_QA_expanded
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python venv .venv
+.\.venv\Scripts\Activate.bat
+pip install -r requirements.txt
 ```
 
 Run the full framework:
@@ -93,7 +97,6 @@ Run the full framework:
 python main.py
 ```
 
-On macOS or Linux, use `source .venv/bin/activate` instead of the Windows activation command.
 
 ## Configuration-Driven Design
 
@@ -107,31 +110,19 @@ The framework is driven by [config/config.yaml](config/config.yaml). The configu
   - Logical ammeter name.
   - Python module path.
   - Emulator class name.
-  - TCP port.
+  - Port.
   - Measurement command.
 - Result management:
   - Output directory.
 
-Example ammeter configuration:
-
-```yaml
-ammeters:
-  greenlee:
-    class: GreenleeAmmeter
-    module: Ammeters.Greenlee_Ammeter
-    port: 5000
-    command: "MEASURE_GREENLEE -get_measurement"
-```
-
+### To add a new ammeter emulator:
 Because the framework dynamically imports the configured module and class, the core test runner does not need to know about each ammeter in advance. This keeps the test framework reusable and makes the supported device list easy to extend.
 
-To add a new ammeter emulator:
+To add a new ammeter emulator simply:
 
 1. Create a new emulator class under [Ammeters/](Ammeters/).
-2. Inherit from `AmmeterEmulatorBase`.
-3. Implement `get_current_command`.
-4. Implement `measure_current`.
-5. Add the ammeter to [config/config.yaml](config/config.yaml) with a unique name, module, class, port, and command.
+2. Inherit from `AmmeterEmulatorBase`, and implement `get_current_command` and `measure_current`.
+3. Add the ammeter to [config.yaml](config/config.yaml) with a unique name, module, class, port, and command.
 
 Example:
 
@@ -144,7 +135,7 @@ ammeters:
     command: "MEASURE_NEW_METER -get_measurement"
 ```
 
-After that, [main.py](main.py) can run the new ammeter together with the existing devices without changing the framework core.
+After that, [main.py](main.py) can run the new ammeter together with the existing devices **without changing any code**.
 
 ## Results and Analytics
 
@@ -156,11 +147,11 @@ results/samples/<run_id>/
 
 That directory contains:
 
-- [metadata.json](results/samples/631c0bce-245e-4d5d-a0e7-365e5c8c27ab/metadata.json): Run ID, UTC timestamps, run status, sampling configuration, ammeter configuration, total samples, valid samples, failed samples, and artifact paths.
-- [greenlee/greenlee_samples.csv](results/samples/631c0bce-245e-4d5d-a0e7-365e5c8c27ab/greenlee/greenlee_samples.csv): Raw sample data for each ammeter. Other ammeters get the same file pattern.
-- [greenlee/time_series.png](results/samples/631c0bce-245e-4d5d-a0e7-365e5c8c27ab/greenlee/time_series.png): Per-ammeter plot of current measurements over time. Other ammeters get the same file pattern.
-- [analytics/analytics.csv](results/samples/631c0bce-245e-4d5d-a0e7-365e5c8c27ab/analytics/analytics.csv): Per-run statistics for each ammeter.
-- [analytics/time_series.png](results/samples/631c0bce-245e-4d5d-a0e7-365e5c8c27ab/analytics/time_series.png): Combined time-series plot for all configured ammeters.
+- [metadata.json](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/metadata.json): Run ID, UTC timestamps, run status, sampling configuration, ammeter configuration, total samples, valid samples, failed samples, and artifact paths.
+- [greenlee/greenlee_samples.csv](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/greenlee/greenlee_samples.csv): Raw sample data for each ammeter. Other ammeters get the same file pattern.
+- [greenlee/time_series.png](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/greenlee/time_series.png): Per-ammeter plot of current measurements over time. Other ammeters get the same file pattern.
+- [analytics/analytics.csv](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/analytics/analytics.csv): Per-run statistics for each ammeter.
+- [analytics/time_series.png](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/analytics/time_series.png): Combined time-series plot for all configured ammeters.
 
 The per-run analytics include:
 
