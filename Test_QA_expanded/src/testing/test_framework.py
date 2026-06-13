@@ -1,18 +1,22 @@
-import importlib
 import math
-import statistics
-import threading
 import time
 import uuid
+import importlib
+import threading
+import statistics
+
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
-from Ammeters.base_ammeter import AmmeterEmulatorBase
-from Ammeters.client import request_current_from_ammeter
+from ..utils.logger import TestLogger
 from ..utils.config import load_config
 from ..utils.test_results import save_test_results
+from Ammeters.base_ammeter import AmmeterEmulatorBase
+from Ammeters.client import request_current_from_ammeter
+
+LOG_DIR = "results/logs"
 
 
 @dataclass
@@ -43,7 +47,10 @@ class AmmeterAnalytics:
 
 class AmmeterTestFramework:
     def __init__(self, config_path: str = "config/config.yaml"):
-        self.config = load_config(config_path)
+        self.logger = TestLogger("ammeter_test_framework", LOG_DIR)
+        self.logger.info(f"Loading test framework configuration from {config_path}")
+        self.config = load_config(config_path, self.logger)
+        self.logger.info("Test framework configuration loaded successfully")
         self._threads: List[threading.Thread] = []
         self._last_run_id: Optional[str] = None
         self._last_run_started_at: Optional[str] = None
@@ -64,8 +71,10 @@ class AmmeterTestFramework:
         frequency_hz = float(sampling_config.get("sampling_frequency_hz", 0) or 0)
 
         if duration_seconds <= 0:
+            self.logger.error("Invalid sampling config: total_duration_seconds <= 0")
             raise ValueError("total_duration_seconds must be greater than zero.")
         if frequency_hz <= 0:
+            self.logger.error("Invalid sampling config: sampling_frequency_hz <= 0")
             raise ValueError("sampling_frequency_hz must be greater than zero.")
 
         return {
@@ -77,24 +86,36 @@ class AmmeterTestFramework:
 
     def start_emulators(self) -> None:
         """Start each ammeter emulator in a separate daemon thread using config."""
+        self.logger.info("Starting configured ammeter emulators")
         for ammeter_type, ammeter_config in self.config["ammeters"].items():
-            ammeter_class = self._load_ammeter_class(ammeter_config)
-            ammeter = ammeter_class(ammeter_config["port"])
+            try:
+                ammeter_class = self._load_ammeter_class(ammeter_config)
+                ammeter = ammeter_class(ammeter_config["port"])
 
-            thread = threading.Thread(
-                target=ammeter.start_server,
-                daemon=True,
-                name=f"{ammeter_type}_emulator",
-            )
-            thread.start()
-            self._threads.append(thread)
+                thread = threading.Thread(
+                    target=ammeter.start_server,
+                    daemon=True,
+                    name=f"{ammeter_type}_emulator",
+                )
+                thread.start()
+                self._threads.append(thread)
+                self.logger.info(
+                    f"Started {ammeter_type} emulator on port {ammeter_config['port']}"
+                )
+            except Exception as exc:
+                self.logger.error(
+                    f"Failed to start {ammeter_type} emulator: {exc}"
+                )
+                raise
 
         time.sleep(5)
+        self.logger.info("Ammeter emulator startup wait completed")
 
     def run_tests(self) -> List[MeasurementSample]:
         """Collect current measurements from every configured ammeter."""
         ammeters = self.config.get("ammeters", {})
         if not ammeters:
+            self.logger.error("No ammeters are configured")
             raise ValueError("No ammeters are configured.")
 
         settings = self._sampling_settings()
@@ -105,6 +126,13 @@ class AmmeterTestFramework:
         self._last_run_id = run_id
         self._last_run_started_at = self._utc_now()
         self._last_run_ended_at = None
+        self.logger.info(
+            "Starting measurement run "
+            f"{run_id}: duration={settings['duration_seconds']}s, "
+            f"frequency={settings['frequency_hz']}Hz, "
+            f"samples={settings['sample_count']}, "
+            f"interval={settings['sample_interval_seconds']}s"
+        )
 
         for sample_index in range(1, int(settings["sample_count"]) + 1):
             scheduled_time = start_time + (
@@ -147,13 +175,27 @@ class AmmeterTestFramework:
                             error=str(exc),
                         )
                     )
+                    self.logger.warning(
+                        f"Measurement failed for {ammeter_type} "
+                        f"on sample {sample_index}: {exc}"
+                    )
 
         self._last_run_ended_at = self._utc_now()
+        failed_samples = sum(1 for sample in samples if sample.status != "ok")
+        self.logger.info(
+            f"Measurement run {run_id} completed: "
+            f"total_samples={len(samples)}, "
+            f"valid_samples={len(samples) - failed_samples}, "
+            f"failed_samples={failed_samples}"
+        )
         return samples
 
     def analyze(self, measurements: List[MeasurementSample]) -> Dict[str, AmmeterAnalytics]:
         """Compute statistical metrics for each configured ammeter."""
         run_id = self._run_id_from_samples(measurements)
+        self.logger.info(
+            f"Starting analysis for run {run_id} with {len(measurements)} samples"
+        )
         analytics: Dict[str, AmmeterAnalytics] = {}
 
         for ammeter_type in self.config.get("ammeters", {}):
@@ -201,6 +243,12 @@ class AmmeterTestFramework:
                     coefficient_of_variation=None,
                 )
 
+        summary = ", ".join(
+            f"{ammeter_type}: valid={result.valid_sample_count}, "
+            f"failed={result.failed_sample_count}"
+            for ammeter_type, result in analytics.items()
+        )
+        self.logger.info(f"Analysis completed for run {run_id}: {summary}")
         return analytics
 
     def save_results(
@@ -218,14 +266,23 @@ class AmmeterTestFramework:
             or (measurements[-1].timestamp_utc if measurements else self._utc_now())
         )
 
-        return save_test_results(
-            config=self.config,
-            measurements=measurements,
-            analysis=analysis,
-            run_id=self._run_id_from_samples(measurements),
-            started_at_utc=started_at,
-            ended_at_utc=ended_at,
-        )
+        run_id = self._run_id_from_samples(measurements)
+        self.logger.info(f"Saving results for run {run_id}")
+        try:
+            result_path = save_test_results(
+                config=self.config,
+                measurements=measurements,
+                analysis=analysis,
+                run_id=run_id,
+                started_at_utc=started_at,
+                ended_at_utc=ended_at,
+            )
+        except Exception as exc:
+            self.logger.error(f"Failed to save results for run {run_id}: {exc}")
+            raise
+
+        self.logger.info(f"Results for run {run_id} saved to {result_path}")
+        return result_path
 
     def _run_id_from_samples(self, measurements: List[MeasurementSample]) -> str:
         if measurements:

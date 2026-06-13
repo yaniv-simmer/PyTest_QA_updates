@@ -1,5 +1,6 @@
 import csv
 import json
+import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -193,12 +194,33 @@ def _write_timeseries_plot(
         ]
         if valid_samples:
             plotted = True
-            ax.plot(
-                [sample.elapsed_seconds for sample in valid_samples],
-                [sample.current_a for sample in valid_samples],
+            elapsed_seconds = [sample.elapsed_seconds for sample in valid_samples]
+            current_values = [sample.current_a for sample in valid_samples]
+            (sample_line,) = ax.plot(
+                elapsed_seconds,
+                current_values,
                 marker="o",
                 linewidth=1.5,
                 label=ammeter_type,
+            )
+            line_color = sample_line.get_color()
+            mean_current = statistics.mean(current_values)
+            median_current = statistics.median(current_values)
+            ax.axhline(
+                mean_current,
+                color=line_color,
+                linestyle="--",
+                linewidth=1.2,
+                alpha=0.85,
+                label=f"{ammeter_type} mean ({mean_current:.3f} A)",
+            )
+            ax.axhline(
+                median_current,
+                color=line_color,
+                linestyle=":",
+                linewidth=1.4,
+                alpha=0.95,
+                label=f"{ammeter_type} median ({median_current:.3f} A)",
             )
 
     if not plotted:
@@ -209,7 +231,7 @@ def _write_timeseries_plot(
     ax.set_ylabel("Current (A)")
     ax.grid(True, alpha=0.3)
     if plotted:
-        ax.legend()
+        ax.legend(fontsize="small")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
