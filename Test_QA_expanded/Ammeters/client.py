@@ -1,8 +1,13 @@
 from socket import socket, AF_INET, SOCK_STREAM
 
 
-def request_current_from_ammeter(port: int, command: bytes):
+def request_current_from_ammeter(
+    port: int,
+    command: bytes,
+    timeout_seconds: float = 1.0,
+):
     with socket(AF_INET, SOCK_STREAM) as s:
+        s.settimeout(timeout_seconds)
         s.connect(('localhost', port))
         s.sendall(command)
         data = s.recv(1024)

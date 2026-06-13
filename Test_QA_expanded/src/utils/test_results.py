@@ -11,6 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from .accuracy_assessment import write_historical_accuracy_assessment
+from .config import AmmeterConfig, AppConfig
 
 
 @dataclass
@@ -28,19 +29,19 @@ class TestRunMetadata:
 
 
 def save_test_results(
-    config: Dict[str, Any],
+    config: AppConfig,
     measurements: List[Any],
     analysis: Dict[str, Any],
     run_id: str,
     started_at_utc: str,
     ended_at_utc: str,
 ) -> Path:
-    output_dir = Path(config.get("result_management", {}).get("output_dir", "results"))
+    output_dir = Path(config.output_dir)
     run_dir = output_dir / "samples" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
     sample_artifacts = {}
-    for ammeter_type in config.get("ammeters", {}):
+    for ammeter_type in config.ammeters:
         sample_artifacts[ammeter_type] = {
             "csv": f"{ammeter_type}/{ammeter_type}_samples.csv",
             "time_series_plot": f"{ammeter_type}/time_series.png",
@@ -62,19 +63,19 @@ def save_test_results(
         _write_samples_csv(run_dir / sample_artifact["csv"], ammeter_measurements)
         _write_timeseries_plot(
             run_dir / sample_artifact["time_series_plot"],
-            {ammeter_type: config.get("ammeters", {})[ammeter_type]},
+            {ammeter_type: config.ammeters[ammeter_type]},
             ammeter_measurements,
             title=f"{ammeter_type} Current Measurements Over Time",
         )
 
     _write_analytics_csv(
         run_dir / artifacts["analytics"]["csv"],
-        config.get("ammeters", {}),
+        config.ammeters,
         analysis,
     )
     _write_timeseries_plot(
         run_dir / artifacts["analytics"]["time_series_plot"],
-        config.get("ammeters", {}),
+        config.ammeters,
         measurements,
     )
     _write_metadata_json(
@@ -116,7 +117,7 @@ def _write_samples_csv(output_path: Path, measurements: List[Any]) -> None:
 
 def _write_analytics_csv(
     output_path: Path,
-    ammeters: Dict[str, Any],
+    ammeters: Dict[str, AmmeterConfig],
     analysis: Dict[str, Any],
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -146,7 +147,7 @@ def _write_analytics_csv(
 
 def _write_metadata_json(
     output_path: Path,
-    config: Dict[str, Any],
+    config: AppConfig,
     measurements: List[Any],
     artifacts: Dict[str, Any],
     run_id: str,
@@ -162,8 +163,16 @@ def _write_metadata_json(
         started_at_utc=started_at_utc,
         ended_at_utc=ended_at_utc,
         status="completed" if failed_samples == 0 else "completed_with_errors",
-        sampling_config=config.get("testing", {}).get("sampling", {}),
-        ammeter_config=config.get("ammeters", {}),
+        sampling_config=asdict(config.sampling),
+        ammeter_config={
+            name: {
+                "class": ammeter.class_name,
+                "module": ammeter.module,
+                "port": ammeter.port,
+                "command": ammeter.command,
+            }
+            for name, ammeter in config.ammeters.items()
+        },
         total_samples=total_samples,
         valid_samples=total_samples - failed_samples,
         failed_samples=failed_samples,
@@ -176,7 +185,7 @@ def _write_metadata_json(
 
 def _write_timeseries_plot(
     output_path: Path,
-    ammeters: Dict[str, Any],
+    ammeters: Dict[str, AmmeterConfig],
     measurements: List[Any],
     title: str = "Current Measurements Over Time",
 ) -> None:
