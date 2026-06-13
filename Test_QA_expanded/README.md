@@ -47,10 +47,6 @@ The assignment asks for a comprehensive test framework for multiple current meas
 
 Each ammeter has different internal measurement logic, but the framework talks to all of them through the same request path.
 
-### Configurable Sampling
-
-Sampling behavior is controlled from [config/config.yaml](config/config.yaml). The framework derives the number of sample cycles from the total duration and sampling frequency, then records every successful or failed measurement with enough metadata to debug the run.
-
 ### Configuration-Driven Design
 
 The framework is driven by [config/config.yaml](config/config.yaml). The configuration defines:
@@ -60,17 +56,17 @@ The framework is driven by [config/config.yaml](config/config.yaml). The configu
   - `sampling_frequency_hz`: Number of sample cycles per second.
   - `measurements_count`: Optional configuration field retained in the schema. The current sampler derives the actual sample count from duration and frequency.
 - Ammeter registration:
-  - Logical ammeter name.
-  - Python module path: The import path Python uses to dynamically load the ammeter implementation, for example `Ammeters.Greenlee_Ammeter`.
-  - Emulator class name.
-  - Port.
-  - Measurement command.
+  - `class`: Logical ammeter name.
+  - `module`: Python module path: The import path Python uses to dynamically load the ammeter implementation, for example `Ammeters.Greenlee_Ammeter`.
+  - `class`: Emulator class name.
+  - `port`
+  - `command`
 - Result management:
-  - Output directory.
+  - `output_dir`
 
 Because the framework dynamically imports the configured module and class, the core test runner does not need to know about each ammeter in advance. This keeps the test framework reusable and makes the supported device list easy to extend.
 
-#### To add a new ammeter emulator:
+#### To add a new ammeter emulator simply:
 
 1. Create a new emulator class under [Ammeters/](Ammeters/).
 2. Inherit from `AmmeterEmulatorBase`, and implement `get_current_command` and `measure_current`.
