@@ -1,5 +1,7 @@
 # Ammeter Test Framework
 
+![Cross-Ammeters Accuracy Assessment Dashboard](results/analytics/accuracy_assessment_dashboard.png)
+
 This project is a Python-based testing framework for simulated current measurement devices. It was built for an embedded systems QA exercise and demonstrates a unified way to start multiple ammeter emulators, collect timed current samples, analyze the results, and archive each run for later comparison.
 
 Built with `Python 3.12.10`
@@ -7,10 +9,15 @@ Built with `Python 3.12.10`
 ## Table of Contents
 
 - [Overview and Application Flow](#overview-and-application-flow)
+- [Framework Capabilities](#framework-capabilities)
+  - [Unified Ammeter Interface](#unified-ammeter-interface)
+  - [Configurable Sampling](#configurable-sampling)
+  - [Configuration-Driven Design](#configuration-driven-design)
+  - [Analysis and Ammeter Comparison](#analysis-and-ammeter-comparison)
+  - [Result Archiving and Analytics](#result-archiving-and-analytics)
+  - [Error Handling](#error-handling)
 - [Project Structure](#project-structure)
 - [Setup and Usage](#setup-and-usage)
-- [Configuration-Driven Design](#configuration-driven-design)
-- [Results and Analytics](#results-and-analytics)
 - [Design Decisions](#design-decisions)
 
 ## Overview and Application Flow
@@ -34,7 +41,7 @@ The assignment asks for a comprehensive test framework for multiple current meas
 6. The analysis step calculates per-ammeter statistics and stability metrics.
 7. The result utilities save CSV, JSON, plots, logs, and refreshed historical analytics under [results/](results/).
 
-## Features
+## Framework Capabilities
 
 ### Unified Ammeter Interface
 
@@ -44,13 +51,101 @@ Each ammeter has different internal measurement logic, but the framework talks t
 
 Sampling behavior is controlled from [config/config.yaml](config/config.yaml). The framework derives the number of sample cycles from the total duration and sampling frequency, then records every successful or failed measurement with enough metadata to debug the run.
 
-### Analysis and Accuracy Assessment
+### Configuration-Driven Design
 
-The analysis step calculates mean, median, standard deviation, minimum, maximum, failed sample count, and coefficient of variation for each ammeter. Historical analytics reuse saved runs to compare measurement stability over time.
+The framework is driven by [config/config.yaml](config/config.yaml). The configuration defines:
 
-### Result Archiving
+- Sampling behavior:
+  - `total_duration_seconds`: Total time to collect samples.
+  - `sampling_frequency_hz`: Number of sample cycles per second.
+  - `measurements_count`: Optional configuration field retained in the schema. The current sampler derives the actual sample count from duration and frequency.
+- Ammeter registration:
+  - Logical ammeter name.
+  - Python module path: The import path Python uses to dynamically load the ammeter implementation, for example `Ammeters.Greenlee_Ammeter`.
+  - Emulator class name.
+  - Port.
+  - Measurement command.
+- Result management:
+  - Output directory.
 
-Every run is stored under a unique UUID in [results/samples/](results/samples/). Each archive contains raw samples, metadata, plots, per-run analytics, and a combined view for the configured ammeters.
+Because the framework dynamically imports the configured module and class, the core test runner does not need to know about each ammeter in advance. This keeps the test framework reusable and makes the supported device list easy to extend.
+
+#### To add a new ammeter emulator:
+
+1. Create a new emulator class under [Ammeters/](Ammeters/).
+2. Inherit from `AmmeterEmulatorBase`, and implement `get_current_command` and `measure_current`.
+3. Add the ammeter to [config.yaml](config/config.yaml) with a unique name, module, class, port, and command.
+
+Example:
+
+```yaml
+ammeters:
+  new_meter:
+    class: NewMeterAmmeter
+    module: Ammeters.NewMeter_Ammeter
+    port: 5003
+    command: "MEASURE_NEW_METER -get_measurement"
+```
+
+After that, [main.py](main.py) can run the new ammeter together with the existing devices **without changing any code**.
+
+### Analysis and Ammeter Comparison
+
+The analysis step calculates mean, median, standard deviation, minimum, maximum, failed sample count, and coefficient of variation for each ammeter.
+
+The framework compares ammeters by looking at repeated-measurement stability. It uses standard deviation and coefficient of variation to show which ammeter produces the most consistent readings across a run and across historical runs. Lower coefficient of variation means the readings vary less relative to that ammeter's mean current.
+
+This is a relative stability comparison, not a true absolute accuracy ranking, because the emulator setup does not provide a shared reference current to compare against.
+
+### Result Archiving and Analytics
+
+Each execution creates a unique run directory under [results/samples/](results/samples/):
+
+```text
+results/samples/<run_id>/
+```
+
+That directory contains:
+
+- [metadata.json](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/metadata.json): Run ID, UTC timestamps, run status, sampling configuration, ammeter configuration, total samples, valid samples, failed samples, and artifact paths.
+- [greenlee/greenlee_samples.csv](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/greenlee/greenlee_samples.csv): Raw sample data for each ammeter. Other ammeters get the same file pattern.
+- [greenlee/time_series.png](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/greenlee/time_series.png): Per-ammeter plot of current measurements over time. Other ammeters get the same file pattern.
+- [analytics/analytics.csv](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/analytics/analytics.csv): Per-run statistics for each ammeter.
+- [analytics/time_series.png](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/analytics/time_series.png): Combined time-series plot for all configured ammeters.
+
+The per-run analytics include:
+
+- Valid sample count.
+- Failed sample count.
+- Mean current.
+- Median current.
+- Standard deviation.
+- Minimum current.
+- Maximum current.
+- Coefficient of variation.
+
+The project also maintains historical analytics in [results/analytics/](results/analytics/):
+
+```text
+results/analytics/
+```
+
+This folder contains:
+
+- [accuracy_assessment_analytics.csv](results/analytics/accuracy_assessment_analytics.csv): Historical statistics across all saved runs.
+- [accuracy_assessment_dashboard.png](results/analytics/accuracy_assessment_dashboard.png): Visual dashboard comparing historical current distribution and relative stability.
+
+Logs are written to [results/logs/](results/logs/):
+
+```text
+results/logs/
+```
+
+### Error Handling
+
+If an ammeter fails to return a sample, the framework records that measurement with `status="error"`, stores the exception text in the `error` column, and leaves `current_a` empty. The run continues collecting samples from the other configured ammeters instead of stopping the whole test.
+
+Failed samples are included in each ammeter's CSV output, counted in the per-run analytics, and summarized in [metadata.json](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/metadata.json). If any sample fails, the run metadata status is saved as `completed_with_errors`.
 
 ## Project Structure
 
@@ -95,92 +190,6 @@ Run the full framework:
 
 ```powershell
 python main.py
-```
-
-
-## Configuration-Driven Design
-
-The framework is driven by [config/config.yaml](config/config.yaml). The configuration defines:
-
-- Sampling behavior:
-  - `total_duration_seconds`: Total time to collect samples.
-  - `sampling_frequency_hz`: Number of sample cycles per second.
-  - `measurements_count`: Optional configuration field retained in the schema. The current sampler derives the actual sample count from duration and frequency.
-- Ammeter registration:
-  - Logical ammeter name.
-  - Python module path.
-  - Emulator class name.
-  - Port.
-  - Measurement command.
-- Result management:
-  - Output directory.
-
-### To add a new ammeter emulator:
-Because the framework dynamically imports the configured module and class, the core test runner does not need to know about each ammeter in advance. This keeps the test framework reusable and makes the supported device list easy to extend.
-
-To add a new ammeter emulator simply:
-
-1. Create a new emulator class under [Ammeters/](Ammeters/).
-2. Inherit from `AmmeterEmulatorBase`, and implement `get_current_command` and `measure_current`.
-3. Add the ammeter to [config.yaml](config/config.yaml) with a unique name, module, class, port, and command.
-
-Example:
-
-```yaml
-ammeters:
-  new_meter:
-    class: NewMeterAmmeter
-    module: Ammeters.NewMeter_Ammeter
-    port: 5003
-    command: "MEASURE_NEW_METER -get_measurement"
-```
-
-After that, [main.py](main.py) can run the new ammeter together with the existing devices **without changing any code**.
-
-## Results and Analytics
-
-Each execution creates a unique run directory under [results/samples/](results/samples/):
-
-```text
-results/samples/<run_id>/
-```
-
-That directory contains:
-
-- [metadata.json](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/metadata.json): Run ID, UTC timestamps, run status, sampling configuration, ammeter configuration, total samples, valid samples, failed samples, and artifact paths.
-- [greenlee/greenlee_samples.csv](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/greenlee/greenlee_samples.csv): Raw sample data for each ammeter. Other ammeters get the same file pattern.
-- [greenlee/time_series.png](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/greenlee/time_series.png): Per-ammeter plot of current measurements over time. Other ammeters get the same file pattern.
-- [analytics/analytics.csv](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/analytics/analytics.csv): Per-run statistics for each ammeter.
-- [analytics/time_series.png](results/samples/588b1dec-e8d4-42c0-847e-39fb709e06e1/analytics/time_series.png): Combined time-series plot for all configured ammeters.
-
-The per-run analytics include:
-
-- Valid sample count.
-- Failed sample count.
-- Mean current.
-- Median current.
-- Standard deviation.
-- Minimum current.
-- Maximum current.
-- Coefficient of variation.
-
-The project also maintains historical analytics in [results/analytics/](results/analytics/):
-
-```text
-results/analytics/
-```
-
-This folder contains:
-
-- [accuracy_assessment_analytics.csv](results/analytics/accuracy_assessment_analytics.csv): Historical statistics across all saved runs.
-- [accuracy_assessment_dashboard.png](results/analytics/accuracy_assessment_dashboard.png): Visual dashboard comparing historical current distribution and relative stability.
-
-The historical ranking is based on measurement stability, using the coefficient of variation. Lower coefficient of variation means the ammeter produced more stable repeated measurements. This is not a true absolute accuracy ranking because the emulator setup does not provide a shared reference current.
-
-Logs are written to [results/logs/](results/logs/):
-
-```text
-results/logs/
 ```
 
 ## Design Decisions
