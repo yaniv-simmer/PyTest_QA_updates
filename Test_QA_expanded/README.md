@@ -177,7 +177,7 @@ From Windows CMD, create and activate a virtual environment, then install depend
 
 ```powershell
 cd Test_QA_expanded
-python venv .venv
+python -m venv .venv
 .\.venv\Scripts\Activate.bat
 pip install -r requirements.txt
 ```
