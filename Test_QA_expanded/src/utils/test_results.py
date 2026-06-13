@@ -9,7 +9,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from .accuracy_assessment import write_historical_accuracy_assessment
 from .config import AmmeterConfig, AppConfig
 
 MEASUREMENT_COLUMNS = [
@@ -131,7 +130,6 @@ def save_test_results(
         started_at_utc,
         ended_at_utc,
     )
-    write_historical_accuracy_assessment(output_dir)
 
     return run_dir
 

@@ -14,6 +14,7 @@ import pandas as pd
 
 from ..utils.logger import TestLogger
 from ..utils.config import AmmeterConfig, AppConfig, load_config
+from ..utils.accuracy_assessment import write_historical_accuracy_assessment
 from ..utils.test_results import save_test_results
 from Ammeters.base_ammeter import AmmeterEmulatorBase
 from Ammeters.client import request_current_from_ammeter
@@ -204,6 +205,7 @@ class AmmeterTestFramework:
         ammeters: Dict[str, AmmeterConfig],
         request_timeout_seconds: float,
     ) -> List[MeasurementSample]:
+        '''Collect a batch of samples from all configured ammeters.'''
         future_to_ammeter = {
             executor.submit(
                 self._measure_ammeter,
@@ -329,12 +331,12 @@ class AmmeterTestFramework:
         self.logger.info(f"Analysis completed for run {run_id}: {summary}")
         return analytics_df
 
-    def save_results(
+    def save_results_and_update_historical_accuracy_assessment(
         self,
         measurements_df: pd.DataFrame,
         analysis_df: pd.DataFrame,
     ) -> Path:
-        """Archive per-ammeter samples, analytics, metadata, and plots for a run."""
+        """Archive run results and update the historical accuracy assessment."""
         measurements_df = _normalize_measurements_dataframe(measurements_df)
         started_at = (
             self._last_run_started_at
@@ -364,8 +366,12 @@ class AmmeterTestFramework:
                 started_at_utc=started_at,
                 ended_at_utc=ended_at,
             )
+            write_historical_accuracy_assessment(Path(self.config.output_dir))
         except Exception as exc:
-            self.logger.error(f"Failed to save results for run {run_id}: {exc}")
+            self.logger.error(
+                f"Failed to save results or update historical accuracy assessment "
+                f"for run {run_id}: {exc}"
+            )
             raise
 
         self.logger.info(f"Results for run {run_id} saved to {result_path}")
