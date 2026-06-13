@@ -1,0 +1,16 @@
+2026-06-14 00:34:42,858 | INFO | test_AmmeterTestFramework_2190690591440 | Loading config from config/config.yaml
+2026-06-14 00:34:42,858 | INFO | test_AmmeterTestFramework_2190690591440 | Config loaded from config/config.yaml
+2026-06-14 00:34:42,858 | INFO | test_AmmeterTestFramework_2190690591440 | Starting configured ammeter emulators
+2026-06-14 00:34:42,858 | INFO | test_AmmeterTestFramework_2190690591440 | Started greenlee emulator on port 5000
+2026-06-14 00:34:42,858 | INFO | test_AmmeterTestFramework_2190690591440 | Started entes emulator on port 5001
+2026-06-14 00:34:42,871 | INFO | test_AmmeterTestFramework_2190690591440 | Started circutor emulator on port 5002
+2026-06-14 00:34:47,872 | INFO | test_AmmeterTestFramework_2190690591440 | All emulators started successfully
+2026-06-14 00:34:47,872 | INFO | test_AmmeterTestFramework_2190690591440 | Starting measurement run a0ca9872-518d-4230-84d2-0316f0ba5be9: duration=5.0s, frequency=30.0Hz, samples=150, interval=0.03333333333333333s
+2026-06-14 00:34:49,833 | WARNING | test_AmmeterTestFramework_2190690591440 | Measurement run a0ca9872-518d-4230-84d2-0316f0ba5be9: sampling loop is late for sample 60 by 0.0023s
+2026-06-14 00:34:50,099 | WARNING | test_AmmeterTestFramework_2190690591440 | Measurement run a0ca9872-518d-4230-84d2-0316f0ba5be9: sampling loop is late for sample 68 by 0.0017s
+2026-06-14 00:34:50,338 | WARNING | test_AmmeterTestFramework_2190690591440 | Measurement run a0ca9872-518d-4230-84d2-0316f0ba5be9: sampling loop is late for sample 75 by 0.0023s
+2026-06-14 00:34:52,856 | INFO | test_AmmeterTestFramework_2190690591440 | Measurement run a0ca9872-518d-4230-84d2-0316f0ba5be9 completed: total_samples=450, valid_samples=450, failed_samples=0
+2026-06-14 00:34:52,856 | INFO | test_AmmeterTestFramework_2190690591440 | Starting analysis for run a0ca9872-518d-4230-84d2-0316f0ba5be9 with 450 samples
+2026-06-14 00:34:52,856 | INFO | test_AmmeterTestFramework_2190690591440 | Analysis completed for run a0ca9872-518d-4230-84d2-0316f0ba5be9: greenlee: valid=150, failed=0, entes: valid=150, failed=0, circutor: valid=150, failed=0
+2026-06-14 00:34:52,871 | INFO | test_AmmeterTestFramework_2190690591440 | Saving results for run a0ca9872-518d-4230-84d2-0316f0ba5be9
+2026-06-14 00:34:54,184 | INFO | test_AmmeterTestFramework_2190690591440 | Results for run a0ca9872-518d-4230-84d2-0316f0ba5be9 saved to results\samples\a0ca9872-518d-4230-84d2-0316f0ba5be9

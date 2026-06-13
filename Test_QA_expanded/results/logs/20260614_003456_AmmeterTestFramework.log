@@ -1,0 +1,14 @@
+2026-06-14 00:34:56,098 | INFO | test_AmmeterTestFramework_2351773885136 | Loading config from config/config.yaml
+2026-06-14 00:34:56,098 | INFO | test_AmmeterTestFramework_2351773885136 | Config loaded from config/config.yaml
+2026-06-14 00:34:56,098 | INFO | test_AmmeterTestFramework_2351773885136 | Starting configured ammeter emulators
+2026-06-14 00:34:56,098 | INFO | test_AmmeterTestFramework_2351773885136 | Started greenlee emulator on port 5000
+2026-06-14 00:34:56,115 | INFO | test_AmmeterTestFramework_2351773885136 | Started entes emulator on port 5001
+2026-06-14 00:34:56,116 | INFO | test_AmmeterTestFramework_2351773885136 | Started circutor emulator on port 5002
+2026-06-14 00:35:01,118 | INFO | test_AmmeterTestFramework_2351773885136 | All emulators started successfully
+2026-06-14 00:35:01,118 | INFO | test_AmmeterTestFramework_2351773885136 | Starting measurement run 588b1dec-e8d4-42c0-847e-39fb709e06e1: duration=5.0s, frequency=30.0Hz, samples=150, interval=0.03333333333333333s
+2026-06-14 00:35:01,495 | WARNING | test_AmmeterTestFramework_2351773885136 | Measurement run 588b1dec-e8d4-42c0-847e-39fb709e06e1: sampling loop is late for sample 12 by 0.0083s
+2026-06-14 00:35:06,088 | INFO | test_AmmeterTestFramework_2351773885136 | Measurement run 588b1dec-e8d4-42c0-847e-39fb709e06e1 completed: total_samples=450, valid_samples=450, failed_samples=0
+2026-06-14 00:35:06,096 | INFO | test_AmmeterTestFramework_2351773885136 | Starting analysis for run 588b1dec-e8d4-42c0-847e-39fb709e06e1 with 450 samples
+2026-06-14 00:35:06,096 | INFO | test_AmmeterTestFramework_2351773885136 | Analysis completed for run 588b1dec-e8d4-42c0-847e-39fb709e06e1: greenlee: valid=150, failed=0, entes: valid=150, failed=0, circutor: valid=150, failed=0
+2026-06-14 00:35:06,096 | INFO | test_AmmeterTestFramework_2351773885136 | Saving results for run 588b1dec-e8d4-42c0-847e-39fb709e06e1
+2026-06-14 00:35:07,421 | INFO | test_AmmeterTestFramework_2351773885136 | Results for run 588b1dec-e8d4-42c0-847e-39fb709e06e1 saved to results\samples\588b1dec-e8d4-42c0-847e-39fb709e06e1
