@@ -1,7 +1,6 @@
 # Ammeter Test Framework
 
-![Cross-Ammeters Accuracy Assessment Dashboard](results/analytics/accuracy_assessment_dashboard.png)
-
+![Cross-Ammeters Accuracy Assessment Dashboard](Test_QA_expanded/results/analytics/accuracy_assessment_dashboard.png)
 This project is a Python-based testing framework for simulated current measurement devices. It was built for an embedded systems QA exercise and demonstrates a unified way to start multiple ammeter emulators, collect timed current samples, analyze the results, and archive each run for later comparison.
 
 Built with `Python 3.12.10`
