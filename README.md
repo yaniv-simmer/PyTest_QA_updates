@@ -175,7 +175,8 @@ From Windows CMD, create and activate a virtual environment, then install depend
 > On macOS or Linux, use `source .venv/bin/activate` instead of the Windows activation command.
 
 ```powershell
-cd Test_QA_expanded
+git clone https://github.com/yaniv-simmer/PyTest_QA_updates.git
+cd PyTest_QA_updates\Test_QA_expanded
 python -m venv .venv
 .\.venv\Scripts\Activate.bat
 pip install -r requirements.txt
