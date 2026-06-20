@@ -4,7 +4,7 @@ import uuid
 import importlib
 import threading
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
@@ -206,7 +206,7 @@ class AmmeterTestFramework:
         request_timeout_seconds: float,
     ) -> List[MeasurementSample]:
         '''Collect a batch of samples from all configured ammeters.'''
-        future_to_ammeter = {
+        futures = [
             executor.submit(
                 self._measure_ammeter,
                 run_id,
@@ -215,16 +215,10 @@ class AmmeterTestFramework:
                 ammeter_type,
                 ammeter_config,
                 request_timeout_seconds,
-            ): ammeter_type
+            )
             for ammeter_type, ammeter_config in ammeters.items()
-        }
-        sample_by_ammeter: Dict[str, MeasurementSample] = {}
-
-        for future in as_completed(future_to_ammeter):
-            ammeter_type = future_to_ammeter[future]
-            sample_by_ammeter[ammeter_type] = future.result()
-
-        return [sample_by_ammeter[ammeter_type] for ammeter_type in ammeters]
+        ]
+        return [future.result() for future in futures]
 
     def _finish_measurement_run(
         self, run_id: str, samples: List[MeasurementSample]
@@ -272,57 +266,40 @@ class AmmeterTestFramework:
         self.logger.info(
             f"Starting analysis for run {run_id} with {len(measurements_df)} samples"
         )
-        analytics_rows: List[Dict[str, Any]] = []
-
+        ammeter_types = list(self.config.ammeters)
         valid_measurements_df = measurements_df[
             measurements_df[STATUS_COLUMN].eq(STATUS_OK)
             & measurements_df[CURRENT_COLUMN].notna()
         ]
-        total_counts = measurements_df.groupby(AMMETER_TYPE_COLUMN).size()
-        stats = valid_measurements_df.groupby(AMMETER_TYPE_COLUMN)[CURRENT_COLUMN].agg(
-            **ANALYTICS_AGGREGATIONS
+
+        analytics_df = (
+            valid_measurements_df.groupby(AMMETER_TYPE_COLUMN)[CURRENT_COLUMN]
+            .agg(**ANALYTICS_AGGREGATIONS)
+            .reindex(ammeter_types)
+        )
+        total_counts = (
+            measurements_df.groupby(AMMETER_TYPE_COLUMN)
+            .size()
+            .reindex(ammeter_types, fill_value=0)
         )
 
-        for ammeter_type in self.config.ammeters:
-            sample_count = int(total_counts.get(ammeter_type, 0))
-            if ammeter_type in stats.index:
-                ammeter_stats = stats.loc[ammeter_type]
-                valid_sample_count = int(ammeter_stats[VALID_SAMPLE_COUNT_COLUMN])
-                mean_current = _optional_float(ammeter_stats[MEAN_CURRENT_COLUMN])
-                standard_deviation = _optional_float(
-                    ammeter_stats[STANDARD_DEVIATION_COLUMN]
-                )
-                if valid_sample_count == 1:
-                    standard_deviation = 0.0
-                coefficient_of_variation = (
-                    standard_deviation / abs(mean_current)
-                    if mean_current and standard_deviation is not None
-                    else None
-                )
-                median_current = _optional_float(ammeter_stats[MEDIAN_CURRENT_COLUMN])
-                minimum_current = _optional_float(ammeter_stats[MINIMUM_CURRENT_COLUMN])
-                maximum_current = _optional_float(ammeter_stats[MAXIMUM_CURRENT_COLUMN])
-            else:
-                valid_sample_count = 0
-                mean_current = median_current = standard_deviation = None
-                minimum_current = maximum_current = coefficient_of_variation = None
+        analytics_df[RUN_ID_COLUMN] = run_id
+        analytics_df[VALID_SAMPLE_COUNT_COLUMN] = (
+            analytics_df[VALID_SAMPLE_COUNT_COLUMN].fillna(0).astype(int)
+        )
+        analytics_df[FAILED_SAMPLE_COUNT_COLUMN] = (
+            total_counts.astype(int) - analytics_df[VALID_SAMPLE_COUNT_COLUMN]
+        )
 
-            analytics_rows.append(
-                {
-                    RUN_ID_COLUMN: run_id,
-                    AMMETER_TYPE_COLUMN: ammeter_type,
-                    VALID_SAMPLE_COUNT_COLUMN: valid_sample_count,
-                    FAILED_SAMPLE_COUNT_COLUMN: sample_count - valid_sample_count,
-                    MEAN_CURRENT_COLUMN: mean_current,
-                    MEDIAN_CURRENT_COLUMN: median_current,
-                    STANDARD_DEVIATION_COLUMN: standard_deviation,
-                    MINIMUM_CURRENT_COLUMN: minimum_current,
-                    MAXIMUM_CURRENT_COLUMN: maximum_current,
-                    COEFFICIENT_OF_VARIATION_COLUMN: coefficient_of_variation,
-                }
-            )
+        single_sample = analytics_df[VALID_SAMPLE_COUNT_COLUMN] == 1
+        analytics_df.loc[single_sample, STANDARD_DEVIATION_COLUMN] = 0.0
 
-        analytics_df = pd.DataFrame(analytics_rows, columns=ANALYTICS_COLUMNS)
+        mean_abs = analytics_df[MEAN_CURRENT_COLUMN].abs()
+        analytics_df[COEFFICIENT_OF_VARIATION_COLUMN] = (
+            analytics_df[STANDARD_DEVIATION_COLUMN] / mean_abs
+        ).where(mean_abs.ne(0) & analytics_df[MEAN_CURRENT_COLUMN].notna())
+
+        analytics_df = analytics_df.reset_index().reindex(columns=ANALYTICS_COLUMNS)
         summary = ", ".join(
             f"{row[AMMETER_TYPE_COLUMN]}: valid={row[VALID_SAMPLE_COUNT_COLUMN]}, "
             f"failed={row[FAILED_SAMPLE_COUNT_COLUMN]}"
@@ -387,7 +364,7 @@ class AmmeterTestFramework:
 
 def _measurements_to_dataframe(measurements: List[MeasurementSample]) -> pd.DataFrame:
     measurements_df = pd.DataFrame(
-        [asdict(sample) for sample in measurements],
+        data=[asdict(sample) for sample in measurements],
         columns=_dataclass_field_names(MeasurementSample),
     )
     return _normalize_measurements_dataframe(measurements_df)
@@ -406,8 +383,3 @@ def _normalize_measurements_dataframe(measurements_df: pd.DataFrame) -> pd.DataF
 def _dataclass_field_names(model: Type[Any]) -> List[str]:
     return [field.name for field in fields(model)]
 
-
-def _optional_float(value: Any) -> Optional[float]:
-    if pd.isna(value):
-        return None
-    return float(value)
