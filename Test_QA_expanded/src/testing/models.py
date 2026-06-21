@@ -53,15 +53,6 @@ class MeasurementSample:
     error: str = ""
 
 
-@dataclass(frozen=True)
-class SamplingPlan:
-    duration_seconds: float
-    frequency_hz: float
-    sample_count: int
-    interval_seconds: float
-    request_timeout_seconds: float = 1.0
-
-
 @dataclass
 class TestRunMetadata:
     run_id: str

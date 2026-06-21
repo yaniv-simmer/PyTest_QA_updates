@@ -30,7 +30,6 @@ from .models import (
     normalize_measurements_dataframe,
     measurements_to_dataframe,
     RUN_ID_COLUMN,
-    SamplingPlan,
     STANDARD_DEVIATION_COLUMN,
     STATUS_COLUMN,
     STATUS_ERROR,
@@ -85,24 +84,12 @@ class AmmeterTestFramework:
             self.logger.error(f"Failed to start emulators: {exc}")
             raise
 
-    def _sampling_plan(self) -> SamplingPlan:
-        sampling = self.config.sampling
-        frequency_hz = sampling.sampling_frequency_hz
-        return SamplingPlan(
-            duration_seconds=sampling.total_duration_seconds,
-            frequency_hz=frequency_hz,
-            sample_count=math.ceil(sampling.total_duration_seconds * frequency_hz),
-            interval_seconds=1.0 / frequency_hz,
-        )
-
-    def _begin_measurement_run(self, run_id: str, plan: SamplingPlan) -> None:
+    def _begin_measurement_run(self, run_id: str) -> None:
         self._last_run_id = run_id
         self._last_run_started_at = self._utc_now()
         self._last_run_ended_at = None
         self.logger.info(
-            f"Starting measurement run {run_id}: "
-            f"duration={plan.duration_seconds}s, frequency={plan.frequency_hz}Hz, "
-            f"samples={plan.sample_count}, interval={plan.interval_seconds}s"
+            f"Starting measurement run {run_id}"
         )
 
     def _measure_ammeter(
@@ -196,17 +183,20 @@ class AmmeterTestFramework:
     def run_tests(self) -> pd.DataFrame:
         """Collect current measurements from every configured ammeter."""
         ammeters: Dict[str, AmmeterConfig] = self.config.ammeters
-        plan: SamplingPlan = self._sampling_plan()
+        sampling = self.config.sampling
+        frequency_hz = sampling.sampling_frequency_hz
+        sample_count = math.ceil(sampling.total_duration_seconds * frequency_hz)
+        interval_seconds = 1.0 / frequency_hz
         run_id = str(uuid.uuid4())
-        self._begin_measurement_run(run_id, plan)
+        self._begin_measurement_run(run_id)
 
         start_time = time.monotonic()
         samples: List[MeasurementSample] = []
 
         with ThreadPoolExecutor(max_workers=len(ammeters)) as executor:
-            for sample_index in range(1, plan.sample_count + 1):
+            for sample_index in range(1, sample_count + 1):
                 self._wait_for_sample_slot(
-                    run_id, start_time, sample_index, plan.interval_seconds
+                    run_id, start_time, sample_index, interval_seconds
                 )
                 batch = self._collect_sample_batch(
                     executor,
@@ -214,7 +204,7 @@ class AmmeterTestFramework:
                     start_time,
                     sample_index,
                     ammeters,
-                    plan.request_timeout_seconds,
+                    1.0,
                 )
                 samples.extend(batch)
 
