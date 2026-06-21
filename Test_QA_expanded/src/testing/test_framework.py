@@ -1,86 +1,46 @@
+import importlib
 import math
+import threading
 import time
 import uuid
-import importlib
-import threading
-
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Type
+from pathlib import Path
+from typing import Dict, List, Optional, Type
 
 import pandas as pd
 
-from ..utils.logger import TestLogger
-from ..utils.config import AmmeterConfig, AppConfig, load_config
-from ..utils.accuracy_assessment import write_historical_accuracy_assessment
-from ..utils.test_results import save_test_results
 from Ammeters.base_ammeter import AmmeterEmulatorBase
 from Ammeters.client import request_current_from_ammeter
 
-LOG_DIR = "results/logs"
-
-
-@dataclass
-class MeasurementSample:
-    run_id: str
-    sample_index: int
-    ammeter_type: str
-    timestamp_utc: str
-    elapsed_seconds: float
-    current_a: Optional[float]
-    status: str
-    error: str = ""
-
-
-@dataclass(frozen=True)
-class SamplingPlan:
-    duration_seconds: float
-    frequency_hz: float
-    sample_count: int
-    interval_seconds: float
-    request_timeout_seconds: float = 1.0
-
-
-RUN_ID_COLUMN = "run_id"
-AMMETER_TYPE_COLUMN = "ammeter_type"
-TIMESTAMP_UTC_COLUMN = "timestamp_utc"
-CURRENT_COLUMN = "current_a"
-STATUS_COLUMN = "status"
-STATUS_OK = "ok"
-STATUS_ERROR = "error"
-
-VALID_SAMPLE_COUNT_COLUMN = "valid_sample_count"
-FAILED_SAMPLE_COUNT_COLUMN = "failed_sample_count"
-MEAN_CURRENT_COLUMN = "mean_current_a"
-MEDIAN_CURRENT_COLUMN = "median_current_a"
-STANDARD_DEVIATION_COLUMN = "standard_deviation_a"
-MINIMUM_CURRENT_COLUMN = "minimum_current_a"
-MAXIMUM_CURRENT_COLUMN = "maximum_current_a"
-COEFFICIENT_OF_VARIATION_COLUMN = "coefficient_of_variation"
-
-ANALYTICS_COLUMNS = [
-    RUN_ID_COLUMN,
+from ..utils.config import load_config
+from ..utils.logger import TestLogger
+from .historical_accuracy_assessor import HistoricalAccuracyAssessor
+from .models import (
+    AmmeterConfig,
+    ANALYTICS_AGGREGATIONS,
+    ANALYTICS_COLUMNS,
     AMMETER_TYPE_COLUMN,
-    VALID_SAMPLE_COUNT_COLUMN,
-    FAILED_SAMPLE_COUNT_COLUMN,
-    MEAN_CURRENT_COLUMN,
-    MEDIAN_CURRENT_COLUMN,
-    STANDARD_DEVIATION_COLUMN,
-    MINIMUM_CURRENT_COLUMN,
-    MAXIMUM_CURRENT_COLUMN,
+    AppConfig,
     COEFFICIENT_OF_VARIATION_COLUMN,
-]
+    CURRENT_COLUMN,
+    FAILED_SAMPLE_COUNT_COLUMN,
+    MeasurementSample,
+    MEAN_CURRENT_COLUMN,
+    normalize_measurements_dataframe,
+    measurements_to_dataframe,
+    RUN_ID_COLUMN,
+    SamplingPlan,
+    STANDARD_DEVIATION_COLUMN,
+    STATUS_COLUMN,
+    STATUS_ERROR,
+    STATUS_OK,
+    TIMESTAMP_UTC_COLUMN,
+    VALID_SAMPLE_COUNT_COLUMN,
+)
+from .results_writer import TestResultsWriter
 
-ANALYTICS_AGGREGATIONS = {
-    VALID_SAMPLE_COUNT_COLUMN: "count",
-    MEAN_CURRENT_COLUMN: "mean",
-    MEDIAN_CURRENT_COLUMN: "median",
-    STANDARD_DEVIATION_COLUMN: "std",
-    MINIMUM_CURRENT_COLUMN: "min",
-    MAXIMUM_CURRENT_COLUMN: "max",
-}
+LOG_DIR = "results/logs"
 
 
 class AmmeterTestFramework:
@@ -91,6 +51,8 @@ class AmmeterTestFramework:
         self._last_run_id: Optional[str] = None
         self._last_run_started_at: Optional[str] = None
         self._last_run_ended_at: Optional[str] = None
+        self._results_writer = TestResultsWriter()
+        self._historical_accuracy_assessor = HistoricalAccuracyAssessor()
 
     @staticmethod
     def _load_ammeter_class(ammeter_config: AmmeterConfig) -> Type[AmmeterEmulatorBase]:
@@ -117,7 +79,7 @@ class AmmeterTestFramework:
                 thread.start()
                 self._threads.append(thread)
                 self.logger.info(f"Started {ammeter_type} emulator on port {ammeter_config.port}")
-            time.sleep(5) # legacy code of original homework assignment
+            time.sleep(5)  # legacy code of original homework assignment
             self.logger.info("All emulators started successfully")
         except Exception as exc:
             self.logger.error(f"Failed to start emulators: {exc}")
@@ -205,7 +167,7 @@ class AmmeterTestFramework:
         ammeters: Dict[str, AmmeterConfig],
         request_timeout_seconds: float,
     ) -> List[MeasurementSample]:
-        '''Collect a batch of samples from all configured ammeters.'''
+        """Collect a batch of samples from all configured ammeters."""
         futures = [
             executor.submit(
                 self._measure_ammeter,
@@ -257,11 +219,11 @@ class AmmeterTestFramework:
                 samples.extend(batch)
 
         self._finish_measurement_run(run_id, samples)
-        return _measurements_to_dataframe(samples)
+        return measurements_to_dataframe(samples)
 
-    def analyze(self, measurements_df: pd.DataFrame) -> pd.DataFrame:
+    def analyze_run(self, measurements_df: pd.DataFrame) -> pd.DataFrame:
         """Compute statistical metrics for each configured ammeter."""
-        measurements_df = _normalize_measurements_dataframe(measurements_df)
+        measurements_df = normalize_measurements_dataframe(measurements_df)
         run_id = self._run_id_from_measurements(measurements_df)
         self.logger.info(
             f"Starting analysis for run {run_id} with {len(measurements_df)} samples"
@@ -308,13 +270,13 @@ class AmmeterTestFramework:
         self.logger.info(f"Analysis completed for run {run_id}: {summary}")
         return analytics_df
 
-    def save_results_and_update_historical_accuracy_assessment(
+    def save_results(
         self,
         measurements_df: pd.DataFrame,
         analysis_df: pd.DataFrame,
     ) -> Path:
-        """Archive run results and update the historical accuracy assessment."""
-        measurements_df = _normalize_measurements_dataframe(measurements_df)
+        """Archive run results to the output directory."""
+        measurements_df = normalize_measurements_dataframe(measurements_df)
         started_at = (
             self._last_run_started_at
             or (
@@ -335,7 +297,7 @@ class AmmeterTestFramework:
         run_id = self._run_id_from_measurements(measurements_df)
         self.logger.info(f"Saving results for run {run_id}")
         try:
-            result_path = save_test_results(
+            result_path = self._results_writer.save(
                 config=self.config,
                 measurements_df=measurements_df,
                 analysis_df=analysis_df,
@@ -343,16 +305,25 @@ class AmmeterTestFramework:
                 started_at_utc=started_at,
                 ended_at_utc=ended_at,
             )
-            write_historical_accuracy_assessment(Path(self.config.output_dir))
         except Exception as exc:
-            self.logger.error(
-                f"Failed to save results or update historical accuracy assessment "
-                f"for run {run_id}: {exc}"
-            )
+            self.logger.error(f"Failed to save results for run {run_id}: {exc}")
             raise
 
         self.logger.info(f"Results for run {run_id} saved to {result_path}")
         return result_path
+
+    def analyze_historical_cross_ammeter_accuracy_assessment(self) -> None:
+        """Update historical cross-ammeter accuracy assessment artifacts."""
+        output_dir = Path(self.config.output_dir)
+        self.logger.info(f"Updating historical accuracy assessment in {output_dir}")
+        try:
+            self._historical_accuracy_assessor.write(output_dir)
+        except Exception as exc:
+            self.logger.error(
+                f"Failed to update historical accuracy assessment in {output_dir}: {exc}"
+            )
+            raise
+        self.logger.info("Historical accuracy assessment updated")
 
     def _run_id_from_measurements(self, measurements_df: pd.DataFrame) -> str:
         if not measurements_df.empty:
@@ -360,26 +331,3 @@ class AmmeterTestFramework:
         if self._last_run_id:
             return self._last_run_id
         return str(uuid.uuid4())
-
-
-def _measurements_to_dataframe(measurements: List[MeasurementSample]) -> pd.DataFrame:
-    measurements_df = pd.DataFrame(
-        data=[asdict(sample) for sample in measurements],
-        columns=_dataclass_field_names(MeasurementSample),
-    )
-    return _normalize_measurements_dataframe(measurements_df)
-
-
-def _normalize_measurements_dataframe(measurements_df: pd.DataFrame) -> pd.DataFrame:
-    measurements_df = measurements_df.reindex(
-        columns=_dataclass_field_names(MeasurementSample)
-    ).copy()
-    measurements_df[CURRENT_COLUMN] = pd.to_numeric(
-        measurements_df[CURRENT_COLUMN], errors="coerce"
-    )
-    return measurements_df
-
-
-def _dataclass_field_names(model: Type[Any]) -> List[str]:
-    return [field.name for field in fields(model)]
-

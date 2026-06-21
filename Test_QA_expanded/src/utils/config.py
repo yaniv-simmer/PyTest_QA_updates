@@ -1,41 +1,7 @@
-from dataclasses import dataclass
-from typing import Dict, Optional
-
 import yaml
 
+from ..testing.models import AmmeterConfig, AppConfig, SamplingConfig
 from .logger import TestLogger
-
-
-@dataclass
-class SamplingConfig:
-    measurements_count: Optional[int]
-    total_duration_seconds: float
-    sampling_frequency_hz: float
-
-    def __post_init__(self) -> None:
-        if self.total_duration_seconds <= 0:
-            raise ValueError("total_duration_seconds must be greater than zero.")
-        if self.sampling_frequency_hz <= 0:
-            raise ValueError("sampling_frequency_hz must be greater than zero.")
-
-
-@dataclass
-class AmmeterConfig:
-    class_name: str
-    module: str
-    port: int
-    command: str
-
-
-@dataclass
-class AppConfig:
-    sampling: SamplingConfig
-    ammeters: Dict[str, AmmeterConfig]
-    output_dir: str
-
-    def __post_init__(self) -> None:
-        if not self.ammeters:
-            raise ValueError("No ammeters are configured.")
 
 
 def load_config(config_path: str, logger: TestLogger) -> AppConfig:
