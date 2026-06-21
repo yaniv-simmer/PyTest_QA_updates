@@ -6,7 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Type
 
 import pandas as pd
 
@@ -46,10 +46,7 @@ class AmmeterTestFramework:
     def __init__(self, config_path: str):
         self.logger = TestLogger(test_name=__class__.__name__, log_dir=LOG_DIR)
         self.config: AppConfig = load_config(config_path, self.logger)
-        self._threads: List[threading.Thread] = []
-        self._last_run_id: Optional[str] = None
-        self._last_run_started_at: Optional[str] = None
-        self._last_run_ended_at: Optional[str] = None
+        self._ammeter_threads: List[threading.Thread] = []
         self._results_writer = TestResultsWriter()
         self._historical_accuracy_assessor = HistoricalAccuracyAssessor()
 
@@ -76,21 +73,13 @@ class AmmeterTestFramework:
                     name=f"{ammeter_type}_emulator",
                 )
                 thread.start()
-                self._threads.append(thread)
+                self._ammeter_threads.append(thread)
                 self.logger.info(f"Started {ammeter_type} emulator on port {ammeter_config.port}")
             time.sleep(5)  # legacy code of original homework assignment
             self.logger.info("All emulators started successfully")
         except Exception as exc:
             self.logger.error(f"Failed to start emulators: {exc}")
             raise
-
-    def _begin_measurement_run(self, run_id: str) -> None:
-        self._last_run_id = run_id
-        self._last_run_started_at = self._utc_now()
-        self._last_run_ended_at = None
-        self.logger.info(
-            f"Starting measurement run {run_id}"
-        )
 
     def _measure_ammeter(
         self,
@@ -169,17 +158,6 @@ class AmmeterTestFramework:
         ]
         return [future.result() for future in futures]
 
-    def _finish_measurement_run(
-        self, run_id: str, samples: List[MeasurementSample]
-    ) -> None:
-        self._last_run_ended_at = self._utc_now()
-        failed = sum(1 for sample in samples if sample.status != STATUS_OK)
-        self.logger.info(
-            f"Measurement run {run_id} completed: "
-            f"total_samples={len(samples)}, valid_samples={len(samples) - failed}, "
-            f"failed_samples={failed}"
-        )
-
     def run_tests(self) -> pd.DataFrame:
         """Collect current measurements from every configured ammeter."""
         ammeters: Dict[str, AmmeterConfig] = self.config.ammeters
@@ -188,7 +166,7 @@ class AmmeterTestFramework:
         sample_count = math.ceil(sampling.total_duration_seconds * frequency_hz)
         interval_seconds = 1.0 / frequency_hz
         run_id = str(uuid.uuid4())
-        self._begin_measurement_run(run_id)
+        self.logger.info(f"Starting measurement run {run_id}")
 
         start_time = time.monotonic()
         samples: List[MeasurementSample] = []
@@ -208,7 +186,12 @@ class AmmeterTestFramework:
                 )
                 samples.extend(batch)
 
-        self._finish_measurement_run(run_id, samples)
+        failed = sum(1 for sample in samples if sample.status != STATUS_OK)
+        self.logger.info(
+            f"Measurement run {run_id} completed: "
+            f"total_samples={len(samples)}, valid_samples={len(samples) - failed}, "
+            f"failed_samples={failed}"
+        )
         return measurements_to_dataframe(samples)
 
     def analyze_run(self, measurements_df: pd.DataFrame) -> pd.DataFrame:
@@ -267,24 +250,9 @@ class AmmeterTestFramework:
     ) -> Path:
         """Archive run results to the output directory."""
         measurements_df = normalize_measurements_dataframe(measurements_df)
-        started_at = (
-            self._last_run_started_at
-            or (
-                str(measurements_df.iloc[0][TIMESTAMP_UTC_COLUMN])
-                if not measurements_df.empty
-                else self._utc_now()
-            )
-        )
-        ended_at = (
-            self._last_run_ended_at
-            or (
-                str(measurements_df.iloc[-1][TIMESTAMP_UTC_COLUMN])
-                if not measurements_df.empty
-                else self._utc_now()
-            )
-        )
-
         run_id = self._run_id_from_measurements(measurements_df)
+        started_at = str(measurements_df.iloc[0][TIMESTAMP_UTC_COLUMN])
+        ended_at = str(measurements_df.iloc[-1][TIMESTAMP_UTC_COLUMN])
         self.logger.info(f"Saving results for run {run_id}")
         try:
             result_path = self._results_writer.save(
@@ -316,8 +284,4 @@ class AmmeterTestFramework:
         self.logger.info("Historical accuracy assessment updated")
 
     def _run_id_from_measurements(self, measurements_df: pd.DataFrame) -> str:
-        if not measurements_df.empty:
-            return str(measurements_df.iloc[0][RUN_ID_COLUMN])
-        if self._last_run_id:
-            return self._last_run_id
-        return str(uuid.uuid4())
+        return str(measurements_df.iloc[0][RUN_ID_COLUMN])
